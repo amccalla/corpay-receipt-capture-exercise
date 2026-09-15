@@ -168,6 +168,25 @@ const MAX_INPUT_LENGTH = 64;
  */
 const AMOUNT_RE = /^(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?$/;
 
+/**
+ * Symbols we are willing to strip, per currency. Intentionally conservative:
+ * '$' maps to USD only, because '$' is also the symbol for a dozen other
+ * dollars and guessing which one is precisely the error this module exists to
+ * prevent. A currency absent from this table accepts no symbol at all.
+ */
+const CURRENCY_SYMBOLS: Readonly<Record<string, readonly string[]>> = {
+  USD: ['$', 'US$'],
+  EUR: ['\u20ac'],
+  GBP: ['\u00a3'],
+  JPY: ['\u00a5'],
+  INR: ['\u20b9'],
+  KRW: ['\u20a9'],
+};
+
+function symbolBelongsTo(symbol: string, currency: CurrencyCode): boolean {
+  return (CURRENCY_SYMBOLS[currency] ?? []).includes(symbol);
+}
+
 /** ASCII hyphen-minus and the Unicode minus sign a numeric keypad may emit. */
 const NEGATIVE_MARKERS = /[-−]/;
 
@@ -219,7 +238,24 @@ export function parseAmountToMinorUnits(
   if (body.startsWith(currency)) {
     body = body.slice(currency.length);
   }
-  body = body.replace(/^\p{Sc}+/u, '').trim();
+  // Strip a leading currency symbol ONLY when it belongs to the declared
+  // currency. This used to be a blanket strip, which meant '¥500' entered into
+  // a USD field parsed as USD 500.00 - a 100x error, silently. The ISO-code
+  // branch above already refused the equivalent 'EUR19.99' in a USD field, so
+  // the blanket strip was also internally inconsistent. Symbols and codes now
+  // fail the same way, for the same reason.
+  const leadingSymbol = /^\p{Sc}+/u.exec(body);
+  if (leadingSymbol !== null) {
+    const symbol = leadingSymbol[0];
+    if (!symbolBelongsTo(symbol, currency)) {
+      return {
+        ok: false,
+        error: `'${symbol}' is not the symbol for ${currency}. Remove it or enter the amount in ${currency}.`,
+      };
+    }
+    body = body.slice(symbol.length);
+  }
+  body = body.trim();
 
   if (body === '') {
     return { ok: false, error: 'Enter an amount.' };
@@ -231,11 +267,37 @@ export function parseAmountToMinorUnits(
     body = `0${body}`;
   }
 
+  // A leading group of '0' before a comma is never legitimate thousands
+  // grouping - no formatter emits '0,750' for seven hundred and fifty - so it
+  // can only be a decimal comma. Reject rather than read it as 750 thousand.
+  if (/^0,/.test(body)) {
+    return {
+      ok: false,
+      error: `'${trimmed}' is ambiguous. Use a '.' for the decimal separator, e.g. 0.750`,
+    };
+  }
+
   const match = AMOUNT_RE.exec(body);
   if (match === null) {
     return {
       ok: false,
       error: `'${trimmed}' is not a valid amount. Use digits with an optional '.' decimal, e.g. 1,234.56`,
+    };
+  }
+
+  // For a currency whose exponent is exactly 3, a trailing ',ddd' group is
+  // genuinely ambiguous: '1,234' BHD is either one thousand two hundred and
+  // thirty-four dinars, or 1.234. The two readings differ by 1000x. The regex
+  // happens to reject the European form for 2-decimal currencies only because
+  // ',dd' is not a valid thousands group - an accident, not a decision. Here we
+  // make the decision explicit and let the UI ask, exactly as AMOUNT_RE's own
+  // comment promises.
+  if (exponent === 3 && match[2] === undefined && (match[1] ?? '').includes(',')) {
+    return {
+      ok: false,
+      error:
+        `'${trimmed}' is ambiguous for ${currency}: it could mean ${(match[1] ?? '').replace(/,/g, '')} ` +
+        `or ${(match[1] ?? '').replace(',', '.')}. Use a '.' for the decimal separator.`,
     };
   }
 
@@ -305,9 +367,16 @@ function exceedsSafeInteger(digits: string): boolean {
  * exists to catch. Failing loudly beats printing '19.995'.
  */
 export function formatMinorUnits(minorUnits: number, currency: CurrencyCode): string {
-  if (!Number.isInteger(minorUnits)) {
+  // isSafeInteger, not isInteger. Number.isInteger(1e21) is true, and
+  // String(1e21) is '1e+21', which this function's digit surgery would slice
+  // into the nonsense '1e+.21'. Between 2^53 and 1e21 it is quieter and worse:
+  // the value was already rounded on the way in, so we would confidently print
+  // an amount the number never held. The formatter's precondition is now
+  // exactly the parser's postcondition.
+  if (!Number.isSafeInteger(minorUnits)) {
     throw new RangeError(
-      `minorUnits must be an integer, got ${minorUnits}. A fractional minor unit means a float leaked in.`,
+      `minorUnits must be a safe integer, got ${minorUnits}. A fractional value means a float ` +
+        `leaked in; a magnitude beyond MAX_SAFE_INTEGER cannot be represented exactly.`,
     );
   }
   const exponent = exponentFor(currency);

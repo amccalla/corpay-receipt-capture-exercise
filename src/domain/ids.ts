@@ -225,7 +225,7 @@ function encodeAmount(v: number | null): string {
  * written in order.
  */
 export function intentFingerprint(intent: SubmissionIntent): string {
-  const fields: Array<readonly [keyof SubmissionIntent, string]> = [
+  const fields: (readonly [keyof SubmissionIntent, string])[] = [
     ['fileUri', encodeString(normalizeString(intent.fileUri))],
     ['vendor', encodeString(normalizeString(intent.vendor))],
     ['amountMinorUnits', encodeAmount(intent.amountMinorUnits)],

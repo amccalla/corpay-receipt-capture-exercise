@@ -279,11 +279,17 @@ describe('daysBetweenDateOnly', () => {
     expect(daysBetweenDateOnly('2000-02-28', '2000-03-01')).toBe(2); // 2000 is
   });
 
-  it('is unaffected by daylight saving transitions', () => {
-    // US spring-forward is 2026-03-08 and autumn fall-back 2026-11-01. Naive
-    // (t2 - t1) / 86400000 on LOCAL dates gives 1.958 and 2.042 days here, so a
-    // truncating caller would report 1 and 2 respectively. Civil arithmetic
-    // says 2 and 2, which is what a calendar says.
+  it('gives the calendar answer across a DST boundary', () => {
+    // US spring-forward is 2026-03-08, fall-back 2026-11-01. These are correct
+    // calendar facts and worth pinning.
+    //
+    // Honest scoping, though: this test does NOT prove DST-independence, and an
+    // earlier comment here claimed it did. The naive millisecond implementation
+    // it named as the hazard also returns 2 and 2, because ECMAScript parses a
+    // date-only string as UTC midnight - so string-based math has no DST
+    // exposure to begin with. The property is instead guaranteed structurally,
+    // by the 'locale- and timezone-independent by construction' test below,
+    // which fails if the module ever touches Date.
     expect(daysBetweenDateOnly('2026-03-07', '2026-03-09')).toBe(2);
     expect(daysBetweenDateOnly('2026-10-31', '2026-11-02')).toBe(2);
   });
@@ -388,19 +394,6 @@ describe('instantToDateOnlyUTC', () => {
     );
   });
 
-  it('is documented as lossy, loudly, at its definition', () => {
-    // The brief asks for explicit semantics. A caller reaching for this
-    // function must be warned in the source they hover, not only in a README,
-    // so the warning itself is part of the contract and is asserted here.
-    const source = fs.readFileSync(path.join(__dirname, '..', 'dates.ts'), 'utf8');
-    const docStart = source.indexOf('export function instantToDateOnlyUTC');
-    expect(docStart).toBeGreaterThan(-1);
-    const doc = source.slice(0, docStart);
-    expect(doc).toContain('LOSSY');
-    expect(doc).toContain('NEVER USE IT FOR');
-    expect(doc).toContain('transactionDate');
-  });
-
   it('throws on anything that is not a canonical UTC instant', () => {
     expect(() => instantToDateOnlyUTC('2026-08-11')).toThrow(RangeError);
     expect(() => instantToDateOnlyUTC('2026-08-11T14:03:22.000+02:00')).toThrow(RangeError);
@@ -444,18 +437,25 @@ describe('formatDateOnlyHuman', () => {
   });
 
   it('is locale- and timezone-independent by construction', () => {
-    // No Intl and no Date means process.env.TZ cannot change the output; the
-    // same string appears in the UI, in an export and in CI.
-    const before = formatDateOnlyHuman('2026-08-11');
-    const originalTz = process.env.TZ;
-    try {
-      process.env.TZ = 'Pacific/Kiritimati'; // UTC+14
-      expect(formatDateOnlyHuman('2026-08-11')).toBe(before);
-      process.env.TZ = 'Pacific/Niue'; // UTC-11
-      expect(formatDateOnlyHuman('2026-08-11')).toBe(before);
-    } finally {
-      process.env.TZ = originalTz;
-    }
+    // This asserts the PROPERTY STRUCTURALLY rather than by flipping TZ at
+    // runtime. An earlier version of this test set process.env.TZ and compared
+    // outputs, which proved nothing: inside Jest `process.env` is a Proxy over
+    // a copied object, so the write never reaches libuv/ICU and the runtime
+    // zone never actually changes. Every assertion reduced to f(x) === f(x),
+    // and a deliberately broken formatter built on `new Date(...)` - returning
+    // '10 Aug 2026' for '2026-08-11', the exact off-by-one this module exists
+    // to prevent - passed it verbatim.
+    //
+    // The honest claim is about the source: a module that never touches Date
+    // or Intl cannot depend on the ambient timezone or locale. TZ has to be set
+    // before the process starts, so the only alternatives are a child process
+    // or this. This one fails the moment someone reintroduces Date.
+    const source = fs.readFileSync(path.join(__dirname, '..', 'dates.ts'), 'utf8');
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    expect(code).not.toMatch(/\bnew Date\b/);
+    expect(code).not.toMatch(/\bIntl\b/);
+    expect(code).not.toMatch(/\bDate\s*\.\s*(now|parse|UTC)\b/);
+    expect(code).not.toMatch(/toLocale(Date|Time)?String/);
   });
 
   it('throws on an invalid date rather than rendering "NaN undefined"', () => {

@@ -97,7 +97,7 @@ describe('parseAmountToMinorUnits — the float trap', () => {
     expect(Number('0.29') * 100).not.toBe(29);
   });
 
-  const exactCases: Array<[string, number]> = [
+  const exactCases: [string, number][] = [
     ['19.99', 1999],
     ['0.07', 7],
     ['1.10', 110],
@@ -166,7 +166,7 @@ describe('parseAmountToMinorUnits — three-decimal currencies', () => {
 // ---------------------------------------------------------------------------
 
 describe('parseAmountToMinorUnits — accepted input shapes', () => {
-  const shapes: Array<[string, number]> = [
+  const shapes: [string, number][] = [
     ['19.99', 1999],
     ['  19.99  ', 1999],
     ['\t19.99\n', 1999],
@@ -298,7 +298,7 @@ describe('parseAmountToMinorUnits — MAX_SAFE_INTEGER boundary', () => {
 // ---------------------------------------------------------------------------
 
 describe('formatMinorUnits', () => {
-  const formatCases: Array<[number, string, string]> = [
+  const formatCases: [number, string, string][] = [
     [1999, 'USD', '19.99'],
     [7, 'USD', '0.07'],
     [70, 'USD', '0.70'],
@@ -395,7 +395,7 @@ describe('moneyEquals', () => {
 // ---------------------------------------------------------------------------
 
 describe('parse/format round trip', () => {
-  const roundTripCases: Array<[string, string[]]> = [
+  const roundTripCases: [string, string[]][] = [
     ['USD', ['0.00', '0.01', '19.99', '1234.56', '90071992547409.91']],
     ['JPY', ['0', '1', '500', '1250', '9007199254740991']],
     ['BHD', ['0.000', '0.005', '1.234', '999.999']],

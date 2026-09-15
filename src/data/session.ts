@@ -15,6 +15,7 @@
  *          valid token for the old company and cannot complete under the new one.
  */
 
+import { isValidInstant } from '../domain/dates';
 import type { Instant } from '../domain/types';
 
 /**
@@ -82,7 +83,15 @@ export class SessionManager {
   private session: Session | null = null;
   private listeners = new Set<SessionListener>();
 
-  constructor(private readonly secrets: SecretStore) {}
+  /**
+   * `now` is injected so expiry is decidable without reaching for a global
+   * clock, and so tests can move time deterministically. It defaults to the
+   * real wall clock for app use.
+   */
+  constructor(
+    private readonly secrets: SecretStore,
+    private readonly now: () => Instant = () => new Date().toISOString(),
+  ) {}
 
   subscribe(fn: SessionListener): () => void {
     this.listeners.add(fn);
@@ -94,12 +103,19 @@ export class SessionManager {
     for (const fn of this.listeners) fn(pub);
   }
 
-  private toPublic(s: Session, now?: Instant): PublicSession {
+  /**
+   * `expired` is always computed against a real instant. It previously
+   * defaulted to `false` whenever no `now` was passed, which meant every
+   * payload emit() pushed to a subscriber claimed the session was live - even
+   * one that had expired years earlier. A status field that cannot report the
+   * bad case is worse than no status field.
+   */
+  private toPublic(s: Session, now: Instant = this.now()): PublicSession {
     return {
       userId: s.userId,
       companyId: s.companyId,
       expiresAt: s.expiresAt,
-      expired: now ? s.expiresAt <= now : false,
+      expired: s.expiresAt <= now,
     };
   }
 
@@ -116,7 +132,24 @@ export class SessionManager {
     if (!raw) return null;
     try {
       const parsed = JSON.parse(raw) as Session;
-      if (!parsed?.token || !parsed.companyId || !parsed.userId) return null;
+      // `expiresAt` is validated as strictly as the token itself. Omitting it
+      // produced an IMMORTAL session: `undefined <= now` is false, so the
+      // session never expired and getTokenForCompany() handed the token out
+      // forever. A blob that parses is not a blob that is usable.
+      if (
+        !parsed?.token ||
+        !parsed.companyId ||
+        !parsed.userId ||
+        typeof parsed.expiresAt !== 'string' ||
+        !isValidInstant(parsed.expiresAt)
+      ) {
+        // Parsed, but unusable: a partial write, a value from an older schema, or
+        // a hand-edited blob. It can never produce a session, and it may still
+        // contain a real bearer token, so it is destroyed rather than left in the
+        // Keychain forever where nothing would ever clean it up.
+        await this.secrets.deleteItem(TOKEN_KEY);
+        return null;
+      }
       this.session = parsed;
       this.emit();
       return this.toPublic(parsed);

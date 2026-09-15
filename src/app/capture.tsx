@@ -7,7 +7,7 @@ import { isValidDateOnly } from '@/domain/dates';
 import { parseAmountToMinorUnits } from '@/domain/money';
 import type { ReceiptDraft } from '@/domain/types';
 import { useApp } from '@/ui/app-context';
-import { Banner, Button, Card, Muted, Row, SectionTitle, Title } from '@/ui/components';
+import { Banner, Button, Card, Muted, Row, SectionTitle } from '@/ui/components';
 import { intakeFile } from '@/ui/file-intake';
 import { usePalette } from '@/ui/theme';
 

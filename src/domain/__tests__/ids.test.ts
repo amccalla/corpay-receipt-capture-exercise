@@ -166,7 +166,7 @@ describe('newIdempotencyKey', () => {
 describe('id generation with a hostile RandomSource', () => {
   // A RandomSource is injected, so it is untrusted input. Out-of-contract values
   // must still yield a well-formed id rather than a short, collision-prone one.
-  const hostile: ReadonlyArray<readonly [string, number]> = [
+  const hostile: readonly (readonly [string, number])[] = [
     ['exactly 0 (first char)', 0],
     ['exactly 1 (out of [0,1))', 1],
     ['greater than 1', 17.5],
@@ -202,7 +202,7 @@ describe('isIdempotencyKey', () => {
     expect(isIdempotencyKey('idem_' + alphabet.slice(32))).toBe(true);
   });
 
-  const rejected: ReadonlyArray<readonly [string, string]> = [
+  const rejected: readonly (readonly [string, string])[] = [
     ['empty string', ''],
     ['prefix only', 'idem_'],
     ['one char short', 'idem_' + 'a'.repeat(31)],
@@ -284,7 +284,7 @@ describe('intentFingerprint', () => {
 // ---------------------------------------------------------------------------
 
 describe('shouldRotateIdempotencyKey — substantive changes rotate', () => {
-  const changes: ReadonlyArray<readonly [keyof SubmissionIntent, SubmissionIntent]> = [
+  const changes: readonly (readonly [keyof SubmissionIntent, SubmissionIntent])[] = [
     ['fileUri', { ...BASE_INTENT, fileUri: 'file:///sandbox/receipts/rcp_b.heic' }],
     ['vendor', { ...BASE_INTENT, vendor: 'Blue Bottle Coffee Co.' }],
     ['amountMinorUnits', { ...BASE_INTENT, amountMinorUnits: 1999 }],

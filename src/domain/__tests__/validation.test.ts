@@ -422,7 +422,7 @@ describe('validateReceiptFile - declared type and name', () => {
 });
 
 describe('rejection ergonomics', () => {
-  const samples: ReadonlyArray<readonly [FileRejectionCode, ReceiptFileInput]> = [
+  const samples: readonly (readonly [FileRejectionCode, ReceiptFileInput])[] = [
     ['UNSAFE_NAME', input({ fileName: '../x.jpg' })],
     ['EMPTY', input({ sizeBytes: 0 })],
     ['TOO_LARGE', input({ sizeBytes: MAX_FILE_BYTES + 1 })],

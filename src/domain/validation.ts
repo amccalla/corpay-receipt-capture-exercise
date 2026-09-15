@@ -81,8 +81,15 @@ const MIME_ALIASES: ReadonlyMap<string, string> = new Map<string, string>([
 const EXTENSION_BY_MIME: ReadonlyMap<string, string> = new Map<string, string>([
   ['image/jpeg', 'jpg'],
   ['image/png', 'png'],
+  // Both HEIF labels deliberately map to ONE extension. isSameTypeFamily()
+  // below already treats them as a single container, and safeStorageKey()
+  // promises to be deterministic in localId. With separate extensions that
+  // promise broke: a draft validated on the degraded path (no readable header,
+  // so the DECLARED 'image/heif' is used) and the same draft validated with a
+  // readable 'heic' brand produced two different object keys - one draft,
+  // two orphaned objects in storage.
   ['image/heic', 'heic'],
-  ['image/heif', 'heif'],
+  ['image/heif', 'heic'],
   ['image/webp', 'webp'],
   ['application/pdf', 'pdf'],
 ]);
