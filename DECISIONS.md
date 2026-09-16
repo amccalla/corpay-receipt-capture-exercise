@@ -6,7 +6,7 @@ how to run it; this covers *why*, and what I chose not to do.
 ## Time box
 
 **Roughly one working day**, taken in two passes: a core pass covering the brief's required outcome
-and all six non-negotiables, then an extensions pass covering four of the six optional creative
+and all six non-negotiables, then an extensions pass covering five of the six optional creative
 directions. The brief invites any time box and says explicitly that more time earns no points, so
 the goal was a coherent slice with evidence behind it rather than breadth.
 
@@ -47,7 +47,7 @@ exponent, which the decoder refuses rather than silently scaling.
 every wake-up and atomic partial updates. A blob store gives neither.
 
 **A thin UI over thick pure logic.** Screens are deliberately dumb; the interesting rules live in
-pure modules that take their clock and randomness as parameters. That is what makes 1041 tests fast
+pure modules that take their clock and randomness as parameters. That is what makes 1046 tests fast
 and deterministic, and it is why there are few component tests — the logic a component test would
 cover has been moved somewhere it can be tested properly.
 

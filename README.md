@@ -18,10 +18,10 @@ Design rationale, assumptions, tradeoffs, deliberate omissions and next steps li
 | **Host** | macOS 26.6 (Darwin 25.6), Xcode 27.0, Node 22.23.1, npm 10.9.8 |
 | **Verified on the simulator** | App launches and renders; sign-in screen shows the seeded users and companies; deep-link routing works; Metro bundles 1696 modules; **no runtime errors** |
 | **Verified by test, not by hand** | The five demo steps below. Each maps to end-to-end tests against the real engine, store, session and server (see [Testing](#testing)). |
-| **Verified** | 1041 automated tests; `tsc --noEmit` clean under `strict`; ESLint clean |
+| **Verified** | 1046 automated tests; `tsc --noEmit` clean under `strict`; ESLint clean |
 | **Not verified on device** | A physical handset of either platform |
 | **Simulated, not real** | The backend. There is no network call anywhere in `src/` — the "server" is an in-process object |
-| **Untested in Expo Go** | Notification *delivery*. Expo Go warns `expo-notifications` is not fully supported since SDK 53. The policy and route validation are unit-tested; actual delivery needs a development build (see below) |
+| **Untested in Expo Go** | Notification *delivery*. Expo Go dropped push support in SDK 53 — on Android the import itself throws, which crashed the app until it was guarded. The policy and route validation are unit-tested; delivery needs a development build |
 | **Needs hardware** | Barcode *scanning* through the camera. Barcode *decoding* is pure and has 96 tests |
 
 No Apple or Google developer account, signing credentials, or physical device is required. No
@@ -116,8 +116,6 @@ only step that benefits from a real device.
 
 ## What this platform proves, and what it does not
 
-The brief asks for this explicitly.
-
 **What Expo + React Native genuinely demonstrates here**
 
 - Real durable local persistence across app kill (SQLite via `expo-sqlite`), which is what makes
@@ -135,7 +133,7 @@ The brief asks for this explicitly.
   the client's state machine responds correctly to each *class* of outcome, which is the part a
   reviewer can actually interrogate.
 - **No true background upload.** Uploads run while the app is alive. Real
-  `URLSession`/`WorkManager` background transfer is in the extension list below, not implemented.
+  `URLSession`/`WorkManager` background transfer is listed under Scope as not implemented.
 - **Web is a degraded preview.** There is no native SQLite or Keychain in the browser, so the app
   falls back to in-memory stores — and *says so in a banner* rather than pretending to be durable.
 - **No OCR.** Extraction is a deterministic fake keyed off the storage key. That is a deliberate
@@ -289,11 +287,11 @@ drafts; offline queue; the full state machine; idempotent retry; company boundar
 seeded matching with conflict handling; secure session with switch/logout cleanup; deterministic
 fake OCR feeding a NeedsReview path; failure injection for every modelled failure.
 
-**Creative directions (Phase 2)** — four of the brief's six, chosen because they compose into one
-story rather than four unrelated features: a barcode payload produces values → those values must
+**Creative directions (Phase 2)** — five of the brief's six, chosen because they compose into one
+story rather than five unrelated features: a barcode payload produces values → those values must
 respect the provenance rules → which feed a confidence decision → which is what a notification
-announces. The brief says plainly that *"more extensions do not produce a higher score by
-themselves"*, so the two that did not fit that thread were left out.
+announces. The sixth, a web review console, is mostly new UI rather than new behaviour, and the
+brief says plainly that *"more extensions do not produce a higher score by themselves"*.
 
 - **Barcode / QR extraction** — real GS1-128 Application Identifiers and base64/TLV fiscal-invoice
   QR, not a fake. Both formats are public and fully deterministic, which satisfies the brief's
@@ -313,11 +311,7 @@ themselves"*, so the two that did not fit that thread were left out.
 background transfer; conflict handling across two devices; Detox/E2E; telemetry and crash
 reporting; pre-signed upload URLs.
 
-**What I would do next, in order:** (1) real background upload, because it is the one gap that
-changes the state machine rather than decorating it — a transfer that outlives the process needs a
-reconciliation pass on launch; (2) a `GET /receipts?since=` reconciliation endpoint so a client that
-missed responses can resynchronise rather than retrying blind; (3) Detox coverage of the
-offline → switch-company → back path, which is the sequence most likely to regress.
+Next steps are in [What I would change with another day](#what-i-would-change-with-another-day-and-what-i-would-leave-alone).
 
 ---
 
@@ -433,12 +427,10 @@ device.
   injection in integration tests, not a settings screen.
 - OCR is a hash of the storage key. Same image, same result, every time — which is the property that
   makes the NeedsReview path demonstrable.
-- **Push completion is a LOCAL notification, not remote push.** Remote push needs a push service, a
-  device-token registry, and a server that can reach it — none of which an in-process fake can
-  honestly provide. What this does demonstrate is the real client-side behaviour: permission timing,
-  deep-link validation, collapse keys, and lock-screen privacy. What it does *not* demonstrate is the
-  case that actually matters in production — a completion arriving while the app is dead, which is
-  exactly what makes a reconciliation-on-launch pass mandatory rather than optional.
+- **Push completion is a LOCAL notification, not remote push**, and delivery does not work in Expo
+  Go at all. It demonstrates permission timing, deep-link validation, collapse keys and lock-screen
+  privacy. It does *not* demonstrate the case that matters most in production — a completion
+  arriving while the app is dead, which is what makes reconciliation-on-launch mandatory.
 - Barcode *decoding* is real and tested; barcode *scanning* depends on the device camera and is only
   exercised on a simulator or handset.
 
@@ -495,8 +487,6 @@ Fuller version in [DECISIONS.md](DECISIONS.md).
 
 ### How AI and tooling handled — or missed — native and failure-path complexity
 
-See the worklog below, but the short version:
-
 AI was strong at **breadth against a fixed contract** — once the domain types and state machine were
 pinned, parallel agents produced money handling, calendar arithmetic, magic-byte sniffing, and the
 fake server to spec, with dense edge-case tests.
@@ -537,17 +527,17 @@ npm run lint
 | `domain/__tests__/state-machine` | Every transition, plus the full (state x event) cross-product |
 | `domain/__tests__/state-machine-preservation` | What a transition must *not* touch |
 | `domain/__tests__/regression` | Defects found by adversarial review (see worklog) |
-| `data/__tests__/persistence` | Tenancy in the store; token rules in the session |
-| `server/__tests__/*` | Idempotency, company mismatch, OCR determinism |
-| `sync/__tests__/sync-engine` | All six edge cases, end to end |
 | `domain/__tests__/barcode` | GS1 fixed/variable AIs, hostile TLV, decimal-vs-exponent conflict |
 | `domain/__tests__/confidence` | Band boundaries, ambiguity guard, generated caveats |
 | `domain/__tests__/extraction` | The full 4x4 provenance grid, and the re-denomination rules |
 | `domain/__tests__/user-provenance` | That only what a person typed is marked as theirs |
+| `data/__tests__/persistence` | Tenancy in the store; token rules in the session |
+| `server/__tests__/fake-server` · `ocr` | Idempotency, company mismatch, OCR determinism |
+| `server/__tests__/membership` | Server-side authorization: tokens refused for non-members |
+| `sync/__tests__/sync-engine` | All six edge cases, end to end |
 | `notify/__tests__/policy` | Triggers, and that no body ever leaks an amount |
 | `notify/__tests__/notifier` | Deep-link validation against open-redirect payloads |
 | `notify/__tests__/availability` | The Expo Go import guard that crashed Android |
-| `server/__tests__/membership` | Server-side authorization: tokens refused for non-members |
 | `ui/__tests__/image-edit` | Crop geometry, including degenerate and out-of-bounds rects |
 
 ---
@@ -602,8 +592,8 @@ methods that did not exist and had never been specified. Nothing but `tsc` caugh
 Android — a red box before a single screen rendered. In Expo Go on Android, *importing*
 `expo-notifications` throws outright: its push-token auto-registration runs at import time, and
 remote push was removed from Expo Go in SDK 53. iOS only warns for the identical import, so nothing
-caught it — the project had bundled, type-checked, linted and passed 1041 tests on both platforms
-throughout. The fix guards the import itself rather than the calls, behind
+caught it — the project had bundled, type-checked, linted and passed the whole suite on both
+platforms throughout. The fix guards the import itself rather than the calls, behind
 [`notificationsAvailable()`](src/notify/notifier.ts), so the module is loaded only where it is
 supported and every entry point returns a benign result elsewhere — notably `deliver()` returns
 false rather than claiming a delivery the OS never made. Only running it on an emulator found this,
