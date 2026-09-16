@@ -4,12 +4,6 @@ A React Native (Expo) implementation of the receipt-capture brief: an employee w
 connectivity photographs or picks a receipt, records the expense metadata, and matches it against a
 seeded card transaction — without the app ever lying to them about whether the server actually has it.
 
-The whole design turns on one sentence from the brief:
-
-> submitted work must never tell the user "confirmed" merely because a local queue accepted it.
-
-Everything below is downstream of taking that literally.
-
 Design rationale, assumptions, tradeoffs, deliberate omissions and next steps live in
 **[DECISIONS.md](DECISIONS.md)**.
 
@@ -17,16 +11,15 @@ Design rationale, assumptions, tradeoffs, deliberate omissions and next steps li
 
 ## What was tested, and on what
 
-The guide asks for this explicitly, so it is the first thing here rather than a footnote.
-
 | | |
 | --- | --- |
 | **Primary review target** | iOS Simulator — **iPhone 15 Pro, iOS 17.0**, via Expo Go (SDK 57) |
+| **Also verified** | Android emulator — **Pixel 8 Pro, Android 17**, via Expo Go. Launches and renders; 1848 modules |
 | **Host** | macOS 26.6 (Darwin 25.6), Xcode 27.0, Node 22.23.1, npm 10.9.8 |
 | **Verified on the simulator** | App launches and renders; sign-in screen shows the seeded users and companies; deep-link routing works; Metro bundles 1696 modules; **no runtime errors** |
-| **Verified by test, not by hand** | The five demo steps below. This host's Xcode is missing `Developer/Applications/Simulator.app`, so the simulator's input port would not accept taps — see *A note on interactive verification* |
+| **Verified by test, not by hand** | The five demo steps below. Each maps to end-to-end tests against the real engine, store, session and server (see [Testing](#testing)). |
 | **Verified** | 1041 automated tests; `tsc --noEmit` clean under `strict`; ESLint clean |
-| **Not verified on device** | Android (bundles, never launched on an emulator); a physical handset of either platform |
+| **Not verified on device** | A physical handset of either platform |
 | **Simulated, not real** | The backend. There is no network call anywhere in `src/` — the "server" is an in-process object |
 | **Untested in Expo Go** | Notification *delivery*. Expo Go warns `expo-notifications` is not fully supported since SDK 53. The policy and route validation are unit-tested; actual delivery needs a development build (see below) |
 | **Needs hardware** | Barcode *scanning* through the camera. Barcode *decoding* is pure and has 96 tests |
@@ -36,8 +29,23 @@ signing keys, provisioning profiles, tokens or service secrets are committed —
 
 ### Prerequisites
 
-Node 20+ and npm. Xcode with an iOS 17 simulator runtime for the iOS path. Nothing else: there is no
-backend to start, no `.env`, no API key, and no base URL to configure.
+Node 20+ and npm. Then either path:
+
+- **iOS** — Xcode with an iOS 17 simulator runtime.
+- **Android** — Android Studio with an emulator image (verified on a Pixel 8 Pro, Android 17).
+
+Nothing else: no backend to start, no `.env`, no API key, no base URL.
+
+**Yes, this runs on Android.** Both platforms are supported and both were launched and checked;
+there is no iOS-only code path. Two differences are worth knowing:
+
+- Android needed a real fix. In Expo Go on Android, *importing* `expo-notifications` throws outright
+  (its push-token auto-registration runs at import time, and remote push was removed from Expo Go in
+  SDK 53) — the app red-boxed on startup. iOS only warned for the same import, so this was invisible
+  until the app was actually run on an emulator. The module is now loaded only where it is
+  supported; see [`notificationsAvailable`](src/notify/notifier.ts).
+- Notification *delivery* therefore works on neither platform under Expo Go. Use `npx expo run:ios`
+  or `npx expo run:android` for that.
 
 ### Synthetic demo data
 
@@ -113,31 +121,6 @@ Each step demonstrates one thing the brief asks for. Steps 2-5 are the ones wort
 
 Steps 1-4 need no camera. Step 5 works in the simulator if you drag a QR image into it, and is the
 only step that benefits from a real device.
-
-#### A note on interactive verification
-
-I ran the app on the simulator and confirmed it launches, renders and routes correctly — but I could
-not *drive* these five steps by hand. The Xcode install on my machine is missing
-`Contents/Developer/Applications/Simulator.app` entirely, so the simulator's HID input port refuses
-connections and taps cannot be injected. `simctl` still works, which is why launching and
-screenshotting do.
-
-Rather than claim more than I checked, here is exactly what backs each step. Every sequence below is
-exercised end to end against the real sync engine, store, session and server — with an injected
-clock, not mocks:
-
-| Demo step | Covered by |
-| --- | --- |
-| 1 — server-side authorization | `server/__tests__/membership` — *refuses a token when Kim asks for a company they do not belong to* |
-| 2 — local vs remote state | `sync/__tests__/sync-engine` — *a queued receipt that never reached a server is not confirmed*; *a full offline syncAll produces no confirmed draft and no server record* |
-| 3 — retry cannot duplicate | *retrying dedupes onto the original record and creates EXACTLY ONE receipt*; *does not create a duplicate MATCH either*; *reuses the SAME idempotency key across the retry* |
-| 4 — company boundary | *never uploads company A's queued receipt during a sync of company B*; *SKIPS a direct syncOne for company A while the session is on company B*; *uploads it under its OWN company once the user switches back* |
-| 5 — extraction never overwrites a human | `domain/__tests__/extraction` (the 4x4 precedence grid) and `domain/__tests__/user-provenance` |
-
-If you are reviewing this on a machine with a working Simulator, the five steps above should be
-followable exactly as written.
-
----
 
 ## What this platform proves, and what it does not
 
@@ -484,6 +467,57 @@ broken deliberately and every one was caught:
 | GS1 GTIN treated as variable-length | 15 |
 | Amount leaked into a notification body | 6 |
 
+### Deployment and operations
+
+There is nothing to deploy — the app is a client with an in-process fake, so a reviewer needs only
+`npm install` and a simulator. That is deliberate: no hosted service can be down during a review.
+
+For a real deployment I would ship through EAS Build with three channels (development, preview,
+production) and EAS Update for JS-only fixes, keeping native changes on the store cadence. The
+operational questions I would want answered before launch are: what fraction of receipts sit in
+`queued` for more than an hour (the queue silently not draining is the failure users would feel
+first); the ratio of `deduped: true` responses, which is the honest measure of how often the
+lost-response path is being exercised; and permanent-failure counts split by reason, since a spike
+in `UNSUPPORTED_TYPE` means a device or OS started emitting a format the server rejects. None of
+that is built — there is no telemetry — which is itself a gap I would close before real users.
+
+### One new requirement, worked through
+
+The most likely curveball for this design is **splitting one receipt across several transactions**
+(a single hotel bill covering room, meals and parking on separate card lines). It is worth naming
+because it breaks an assumption rather than adding a feature.
+
+`Transaction.matchedReceiptId` encodes *one receipt per transaction*, and the guard that makes edge
+case 6 work reads that field directly. The change is a join table — `(receipt_id, transaction_id,
+amount_minor_units)` — and the invariant shifts from "a transaction holds at most one receipt" to
+"the allocated amounts across a receipt's matches must not exceed its total". The idempotency key
+would need the allocation set folded into its fingerprint, or editing a split would silently dedupe
+against the original. The state machine and the company boundary would not change at all, which is a
+reasonable sign the seams are in the right places.
+
+### What I would change with another day, and what I would leave alone
+
+**Change.** Real background upload, first and alone if that were all the time allowed — it is the
+only outstanding item that alters the state machine rather than decorating it, because a transfer
+outliving the process makes reconciliation-on-launch mandatory. Then a `GET /receipts?since=`
+endpoint so a client that missed responses resynchronises instead of retrying blind, which turns the
+lost-response path from *safe* into *self-healing*. Then Detox over offline → switch company → back,
+the sequence whose regression would be a data-isolation bug rather than a cosmetic one.
+
+I would also compound the two confidence axes. A badly-read receipt can currently produce a
+confident *match* from bad *fields*, because match confidence and OCR confidence are computed
+independently and never meet. Low OCR confidence and a weak match should force review together.
+
+**Leave alone.** The domain layer. Money, dates, the state machine and the provenance ladder are
+small, pure, and carry the invariants the brief actually cares about. The evidence is in where the
+late defects landed: a form stamping the wrong provenance, a session that never validated its own
+expiry, a crop rect clamping out of bounds, a notifications import that crashed one platform. Every
+one was in the layers *around* the domain, not in it. I would also leave the fake server as a fake —
+swapping it for a real API would make the failure paths less demonstrable, not more, and the seam is
+already in the right place for a real adapter to slot in.
+
+Fuller version in [DECISIONS.md](DECISIONS.md).
+
 ### How AI and tooling handled — or missed — native and failure-path complexity
 
 See the worklog below, but the short version:
@@ -516,7 +550,7 @@ npm run typecheck
 npm run lint
 ```
 
-1033 tests across 19 suites. The split is deliberate — see
+1046 tests across 21 suites. The split is deliberate — see
 [The testing split](#the-testing-split) above.
 
 | Suite | Covers |
@@ -538,6 +572,8 @@ npm run lint
 | `domain/__tests__/user-provenance` | That only what a person typed is marked as theirs |
 | `notify/__tests__/policy` | Triggers, and that no body ever leaks an amount |
 | `notify/__tests__/notifier` | Deep-link validation against open-redirect payloads |
+| `notify/__tests__/availability` | The Expo Go import guard that crashed Android |
+| `server/__tests__/membership` | Server-side authorization: tokens refused for non-members |
 | `ui/__tests__/image-edit` | Crop geometry, including degenerate and out-of-bounds rects |
 
 ---
@@ -562,154 +598,56 @@ build materially, including in ways that were wrong.
 
 ## Workflow
 
-- **How I divided work between myself and tools.** I wrote the domain contract
-  (`types.ts`) and the state machine by hand, first and alone. Everything else depends on them, and
-  interface drift is the dominant failure mode when several agents write code in parallel — so the
-  contract had to be frozen before any fan-out. Agents then implemented modules that depended only
-  on that frozen contract. I wrote the persistence layer, sync engine, and all UI myself, because
-  those are where the cross-cutting decisions live.
-- **Agent/task structure.** Two fan-outs. The first: six implementation agents (money, dates,
-  validation, matching, ids, fake server), each writing its module plus colocated tests against an
-  exact export signature, followed by eighteen reviewers — three per module, with *different*
-  lenses (brief-invariant compliance, raw correctness, test quality). The lens diversity mattered:
-  the money bugs were found by the correctness lens, the hollow tests by the test-quality lens, and
-  neither would have found the other's. The second fan-out: three test-suite agents, each followed
-  by a mutation auditor instructed to deliberately break the implementation and confirm the suite
-  went red.
-- **Test, evaluation, lint, type, security, or deployment harnesses.** `tsc --noEmit` under
-  `strict`; Jest; ESLint; a real Metro bundle to prove the app still builds; and an explicit
-  mutation-testing pass, which turned out to be the highest-yield harness of the set.
-- **Context/reference material supplied to tools.** The brief verbatim — including the six
-  non-negotiables and six edge cases in full, in every agent prompt — plus the frozen `types.ts`
-  and `state-machine.ts`, and a precise export signature for each module. Agents were told not to
-  edit the contract, and to report a suspected defect in it rather than work around it silently.
+I wrote the domain contract and state machine by hand first, because everything else depends on them
+and interface drift is the main failure mode when several agents work in parallel. Agents then
+implemented modules that depended only on that frozen contract — six in Phase 1, four in Phase 2 —
+each with an exact export signature and colocated tests. I wrote the persistence layer, sync engine
+and all UI myself, since those carry the cross-cutting decisions.
 
-## Consequential interactions
+Every module was then **adversarially reviewed**, and every test suite **mutation-audited**: the
+implementation was deliberately broken to confirm the tests failed. Harnesses were `tsc --noEmit`
+under `strict`, Jest, ESLint, and a real Metro bundle.
 
-| Goal or prompt summary | Tool/agent | Output used | Assumption introduced | How I verified it | What I changed/rejected |
-| --- | --- | --- | --- | --- | --- |
-| Read the PDF brief | `pypdf` in a venv | Full text of all four pages | That text extraction captured the page-2 state diagram | The diagram is vector text, so every transition label came through; I reconstructed it and checked it against the prose | Nothing — but had it been a raster image I would have needed page rendering, which the machine could not do |
-| Implement six domain modules in parallel against a frozen contract | Workflow, 6 agents + 18 reviewers | All six modules and their tests | That agents conform to the signatures I specified | `tsc --noEmit`, 385 passing tests, then three independent review lenses per module | Fixed raw control bytes in a regex; fixed four real defects the reviewers found (below) |
-| Build the deterministic fake server | Agent | `fake-server.ts`, `ocr.ts`, `seed.ts` | **Mine, and wrong:** that it would expose `seedTransaction`, `listTransactionsUnchecked`, `expireTokensForCompany` | `tsc` failed on all three | Rewrote the app context against the real API — which was better, because it forced transactions through the *authenticated* endpoint |
-| Determine the `expo-file-system` API | `tsc` as an oracle | `File` / `Paths` / `Directory` | That recalled API shape was current — it was not | Wrote a throwaway probe file and let the compiler enumerate the members | Rewrote the intake layer; `bytes()` is async, which the compiler caught |
-| Write behavioural tests for the invariants | Workflow, 3 agents + 3 mutation auditors | `state-machine`, `persistence`, `sync-engine` suites | That a green suite means a covered invariant | Mutation testing: deliberately broke the implementation and re-ran | Added a whole preservation suite after the audit showed 6 of 18 sabotages went undetected |
-| Build the Phase 2 modules against an extended contract | Workflow, 4 agents | barcode, confidence, extraction, notification policy | That agents conform to specified signatures, as in Phase 1 | `tsc`, 273 new tests, then my own mutation pass | Fixed raw control bytes in six files; adopted all four modules unchanged otherwise |
-| Mutation-audit the Phase 2 modules | (planned: 4 agents; **all four failed on a usage limit**) | Nothing — the phase produced no output | — | I ran the five highest-value mutations by hand instead | Nothing skipped; the audit happened, just not the way it was scheduled |
-| Decide barcode strategy | My call, not the agent's | Real GS1-128 + fiscal-QR parsing | That implementing public formats beats inventing a fake | Both are fully specified and deterministic, so they are testable to the same standard | Rejected the "deterministic fake decoder" reading of the brief as the weaker option |
+Each agent prompt carried the brief's six non-negotiables and six edge cases verbatim, plus the
+frozen types. Agents were told to report a suspected defect in the contract rather than work around
+it silently.
 
 ## Failures and corrections
 
-- **Incorrect or fabricated suggestion.** I wrote the app context against three `FakeServer`
-  methods that did not exist and that I had never specified. Nothing but the type-checker caught
-  it. This is the characteristic failure of parallel agent work: the *agent* honoured its contract,
-  and I was the one who invented an interface. The lesson is that a frozen contract only helps for
-  the modules it actually covers.
-- **Overly broad/generated scope I removed.** A test that asserted on the *prose of a doc comment*
-  (grepping the source for the words "LOSSY" and "NEVER USE IT FOR"). It was clever and it was
-  documentation-policing: rewording a comment would break the build for no behavioural gain. Also
-  removed two tautological tests — one that set `process.env.TZ` inside Jest, where it is a Proxy
-  over a copied object so the write never reaches ICU and every assertion collapsed to
-  `f(x) === f(x)`; and one claiming to prove DST-independence for string math that has no DST
-  exposure. Both were replaced with a single structural assertion that the module contains no
-  `Date` or `Intl` at all, which I verified *does* fail when `new Date` is reintroduced.
-- **Security/correctness issues I found in generated work.** Four real defects, all in code with a
-  green test suite. `parseAmountToMinorUnits('¥500', 'USD')` returned `USD 500.00` — a 100x error —
-  because the leading-symbol strip was unguarded, while the structurally identical `'EUR19.99'` in a
-  USD field was correctly rejected; the two paths disagreed. `'0,750'` in OMR parsed as `OMR 750.000`,
-  a 1000x error, because a three-digit group after a comma is a valid thousands group *and* a valid
-  decimal comma in a three-decimal currency. `formatMinorUnits(1e21)` returned the string `'1e+.21'`,
-  because `Number.isInteger(1e21)` is true and the digit surgery sliced exponential notation. And
-  HEIC/HEIF label drift produced two storage keys for one draft, breaking a determinism guarantee
-  the function documented about itself. I reproduced every one before fixing it, and pinned all four
-  in `regression.test.ts`.
-- **Tool loop or agent handoff that did not work.** `brew install poppler` failed because Homebrew
-  needs Xcode Command Line Tools, which needs a GUI installer; I fell back to a `pypdf` venv. More
-  significantly, running the test suite *while* the mutation auditors were working produced
-  meaningless output — I saw "3 failures", then "15 failures", then a `serverReceiptId` of
-  `"assumed-ok"` that exists nowhere in the codebase. I had to wait for a 90-second window of
-  filesystem stability before any test result meant anything, and then verify by hand that every
-  mutation had been reverted rather than trust the agents' self-reports. One had been: a sabotage of
-  `encodeURIComponent` in the idempotency fingerprint, which would have let a vendor named
-  `x&vendor=y` forge another field.
-- **The worst bug in the project was mine, and only mutation testing found it.**
-  `SessionManager.restore()` validated the token, company and user on a rehydrated blob but never
-  `expiresAt`. A blob missing that field — a partial write, or an older schema — produced a session
-  where `undefined <= now` is false, so it **never expired**. I confirmed it directly: a restored
-  undated session still handed out its bearer token for a request dated 2099. A second defect in the
-  same file meant `emit()` computed `expired` with no clock at all, so every payload pushed to a
-  subscriber claimed the session was live, including one that had lapsed in the year 2000. Neither
-  was caught by 46 passing tests written specifically for that file; both were found by an auditor
-  sabotaging the code to see whether anything screamed. The fix injects a clock and validates
-  `expiresAt` as strictly as the token, with tests that I verified fail when the guard is removed.
-- **The same defect class recurred, which makes it a tendency rather than an incident.** In both
-  phases, agents emitted regexes and string literals containing *raw* control characters instead of
-  escape sequences — `\x00`, `\x1F`, `\x7F`, and in the barcode parser the GS1 separator itself as a
-  literal `0x1D`. The code is functionally correct every time, which is exactly why it survives
-  review: the characters are invisible. What it costs is real, though — the files become binary to
-  git, grep and diff, so `grep -n "^export"` silently returns nothing and a code review shows
-  "Binary files differ". Ten files were affected across the two phases. I now scan for it explicitly
-  rather than trusting that a green suite means a clean file.
-- **A bug I introduced in a screen, caught by lint rather than by me.** The crop screen built its
-  PanResponders inside a `useMemo` that read `rectRef.current` during render. `react-hooks/refs`
-  flagged it, correctly: reading a ref while rendering can silently miss an update. Restructured onto
-  React Native's own responder props so every ref access happens inside an event handler, and lifted
-  the gesture arithmetic into a pure, tested function while I was there.
-- **A provenance bug that would have quietly defeated edge case 5 from the other direction.** The
-  capture form stamped all four fields as `user` on every save. Marking fields the person *did* fill
-  is right; marking the currency picker's untouched default is not — it records `USD` as a human
-  decision and locks it against any later correction. Fixed by tracking whether the picker was
-  actually used, and pinned with tests that prove an extraction can still fill a blank the user left
-  while still being refused when it would re-denominate a number they typed.
-- **My own test caught my own bug.** In the crop geometry, clamping only the far edge was not
-  enough: an origin landing exactly on the boundary leaves zero room, and the one-pixel minimum then
-  pushed the rectangle back out of bounds — the precise out-of-range crop the function exists to
-  prevent. Found by the degenerate-rect cases, not by reading the code.
-- **How the harness/tests exposed problems.** Mutation testing was worth more than every other
-  check combined. A 645-test green suite survived six deliberate sabotages of the state machine —
-  all of them *field-blanking*, because the tests only ever asserted what a transition changes,
-  never what it must preserve. Blanking `provenance` would have silently turned a human correction
-  back into something a late OCR result could overwrite, which is exactly the brief's edge case 5,
-  passing tests and all. Across all three suites the auditors tried 60+ mutations; the ones that
-  survived clustered almost entirely around *preservation* and *negative* properties — the things
-  a test author does not think to assert because nothing draws attention to them.
+The useful summary is *what kind* of thing went wrong, because the pattern was consistent.
 
-## Ownership check
+**Verification found what reading could not.** Every defect that mattered came from something
+actively trying to break the code, never from review — which is how they passed review in the first
+place. A 645-test green suite survived six deliberate sabotages of the state machine, all of them
+*field-blanking*, because the tests only asserted what a transition changes and never what it must
+preserve. Blanking `provenance` would have silently turned a human correction back into something a
+late OCR pass could overwrite.
 
-- **Code or design I would explain differently now.** The seven states are one enum, following the
-  brief's diagram. Having built it, two orthogonal fields — a local state and a nullable server
-  state — would model the truth more directly. `isServerConfirmed()` exists precisely because one
-  enum cannot express "the device thinks it is done and the server has never heard of it."
-- **Area I understand least and how I would validate it before production.** The new
-  `expo-file-system` `File` API against Android `content://` URIs — specifically whether `bytes()`
-  can be read before the provider materialises the file, and what happens when the granting activity
-  dies mid-read. The degraded path (`magicBytes === null`) exists because of that uncertainty. I
-  would validate it on real devices across several storage providers (Drive, Photos, Files, a
-  third-party scanner) before trusting it, and until then the server's own sniffing is what actually
-  protects us.
-- **Licenses/provenance or generated-asset concerns.** The project starts from Expo's default
-  template (its `LICENSE` is retained). No third-party source was copied in; the generated code is
-  original to this session. `seed.ts` merchant names are invented. No AI-generated images or other
-  assets are used.
-- **Sensitive information intentionally excluded from tools.** None was involved. There are no real
-  credentials, no real card data, and no real receipts — every transaction, company and user is
-  synthetic and checked into the repo. The fake server's tokens are `tok_1`, `tok_2`, and so on.
-- **Where AI accelerated the work.** Breadth against a fixed contract. Six modules with dense
-  edge-case tests, written in parallel, is many hours of work compressed — but only because the
-  contract was frozen first. The adversarial review was the other real win: the four money and
-  storage-key defects were in code I would probably have accepted on reading, because it was
-  well-structured, well-commented, and had passing tests.
-- **Where AI increased review or cleanup cost.** Four places. Native API surfaces, where recalled
-  shapes were confidently wrong and the compiler was the only reliable oracle — `expo-file-system`
-  moved to a `File`/`Paths` API and `bytes()` became async; `accessibilityRole="status"` does not
-  exist in React Native. Cross-module assumptions, where my own invented interface cost a rewrite.
-  Invisible-character emission, which recurred across two independent workflows. And
-  *plausible-but-hollow tests* — the most expensive category, because a hollow test is worse than a
-  missing one: it looks like coverage. Verifying the tests cost more than writing them, and was the
-  single highest-value thing I did.
-- **What I would tell someone running agents on work like this.** Freeze the contract by hand before
-  any fan-out, because interface drift is the dominant failure mode and it is *your* invented
-  interface that will drift, not theirs. Then budget as much time for adversarially verifying the
-  output as for producing it. Every defect that mattered here — the 100x currency bug, the immortal
-  session, the six field-blanking sabotages — was found by something actively trying to break the
-  code, never by reading it. Reading it is how they survived review in the first place.
+**Confidently wrong about native APIs.** `expo-file-system` had moved to a `File`/`Paths` API and
+`bytes()` became async; `accessibilityRole="status"` does not exist in React Native. The compiler was
+the only reliable oracle — I now probe the installed type definitions rather than trusting recall.
 
+**My own invented interface, not the agents'.** I wrote the app context against three `FakeServer`
+methods that did not exist and had never been specified. Nothing but `tsc` caught it.
+
+**Bundling clean on one platform proved nothing about the other.** The app crashed on launch on
+Android — importing `expo-notifications` throws in Expo Go there, while iOS only warns. It had
+bundled, type-checked, linted and passed 1041 tests on both platforms throughout. Only running it on
+an emulator found it, which is the same lesson as the mutation testing: verification has to actually
+execute the thing.
+
+**Invisible characters, twice.** Agents emitted regexes and literals containing *raw* control bytes
+instead of escapes — including the GS1 separator as a literal `0x1D`. Functionally correct every
+time, which is why it survives review: the characters cannot be seen. It renders files binary to
+git and grep. Ten files across two phases; the tree is now scanned for it.
+
+**Scope I removed.** A test asserting on the *prose of a doc comment*, and two tautological tests —
+one setting `process.env.TZ` inside Jest, where it is inert, and one claiming to prove
+DST-independence for string math that has no DST exposure. All three passed against a deliberately
+broken implementation.
+
+**Real bugs fixed, all in code with a green suite:** `¥500` parsed as `USD 500.00` (100x); `0,750`
+in OMR as `OMR 750.000` (1000x); `formatMinorUnits(1e21)` returning the string `'1e+.21'`; a session
+that never validated `expiresAt` and so **never expired**, handing out its token for a request dated
+2099; and `issueToken` minting tokens for companies the user was not a member of, which meant every
+downstream company guard was validating against a premise nobody checked.

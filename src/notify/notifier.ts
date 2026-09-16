@@ -18,8 +18,30 @@
  * dead. That is stated plainly in the README rather than glossed over.
  */
 
+import Constants from 'expo-constants';
+
 import type { ReceiptDraft } from '../domain/types';
 import { planNotification, type NotificationPlan } from './policy';
+
+/**
+ * Whether `expo-notifications` can safely be loaded at all.
+ *
+ * This is not a nicety. In Expo Go on Android, merely IMPORTING the module
+ * throws: its DevicePushTokenAutoRegistration side-effect runs at import time
+ * and hard-throws because remote push was removed from Expo Go in SDK 53. On
+ * iOS the same import only warns, which is exactly why this went unnoticed
+ * until the app was actually launched on an Android emulator — it red-boxed on
+ * startup before a single screen rendered.
+ *
+ * So the guard is on the IMPORT, not on the call. Every function below returns
+ * a benign result in Expo Go rather than loading the module.
+ *
+ * `appOwnership` is 'expo' only in Expo Go; a development build or a standalone
+ * app reports null, and there the module loads normally.
+ */
+export function notificationsAvailable(): boolean {
+  return Constants.appOwnership !== 'expo';
+}
 
 export type PermissionState = 'granted' | 'denied' | 'undetermined';
 
@@ -32,6 +54,7 @@ export type PermissionState = 'granted' | 'denied' | 'undetermined';
  * lands in the tray for when they look later.
  */
 export async function configureNotifications(): Promise<void> {
+  if (!notificationsAvailable()) return;
   const Notifications = await import('expo-notifications');
   Notifications.setNotificationHandler({
     handleNotification: async () => ({
@@ -44,6 +67,7 @@ export async function configureNotifications(): Promise<void> {
 }
 
 export async function getNotificationPermission(): Promise<PermissionState> {
+  if (!notificationsAvailable()) return 'denied';
   try {
     const Notifications = await import('expo-notifications');
     const { status } = await Notifications.getPermissionsAsync();
@@ -65,6 +89,7 @@ export async function getNotificationPermission(): Promise<PermissionState> {
  * evaluate.
  */
 export async function requestNotificationPermission(): Promise<PermissionState> {
+  if (!notificationsAvailable()) return 'denied';
   try {
     const Notifications = await import('expo-notifications');
     const existing = await Notifications.getPermissionsAsync();
@@ -86,6 +111,7 @@ export async function requestNotificationPermission(): Promise<PermissionState> 
  * callers cannot report success for a notification the OS refused.
  */
 export async function deliver(plan: NotificationPlan): Promise<boolean> {
+  if (!notificationsAvailable()) return false;
   if ((await getNotificationPermission()) !== 'granted') return false;
 
   try {
