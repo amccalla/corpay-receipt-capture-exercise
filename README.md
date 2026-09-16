@@ -10,7 +10,52 @@ The whole design turns on one sentence from the brief:
 
 Everything below is downstream of taking that literally.
 
+Design rationale, assumptions, tradeoffs, deliberate omissions and next steps live in
+**[DECISIONS.md](DECISIONS.md)**.
+
 ---
+
+## What was tested, and on what
+
+The guide asks for this explicitly, so it is the first thing here rather than a footnote.
+
+| | |
+| --- | --- |
+| **Primary review target** | iOS Simulator — **iPhone 15 Pro, iOS 17.0**, via Expo Go (SDK 57) |
+| **Host** | macOS 26.6 (Darwin 25.6), Xcode 27.0, Node 22.23.1, npm 10.9.8 |
+| **Verified** | App launches and renders; Metro bundles 1696 modules with no runtime errors; 1041 automated tests; `tsc --noEmit` clean under `strict`; ESLint clean |
+| **Not verified on device** | Android (bundles, never launched on an emulator); a physical handset of either platform |
+| **Simulated, not real** | The backend. There is no network call anywhere in `src/` — the "server" is an in-process object |
+| **Untested in Expo Go** | Notification *delivery*. Expo Go warns `expo-notifications` is not fully supported since SDK 53. The policy and route validation are unit-tested; actual delivery needs a development build (see below) |
+| **Needs hardware** | Barcode *scanning* through the camera. Barcode *decoding* is pure and has 96 tests |
+
+No Apple or Google developer account, signing credentials, or physical device is required. No
+signing keys, provisioning profiles, tokens or service secrets are committed — there are none.
+
+### Prerequisites
+
+Node 20+ and npm. Xcode with an iOS 17 simulator runtime for the iOS path. Nothing else: there is no
+backend to start, no `.env`, no API key, and no base URL to configure.
+
+### Synthetic demo data
+
+All seeded, all fake, all committed. Sign-in is a picker — there are no passwords.
+
+| User | Member of |
+| --- | --- |
+| Dana Reyes | Northwind **and** Acme |
+| Kim Alvarez | Northwind only |
+| Sam Okafor | Acme only |
+
+The membership is uneven on purpose: it makes the authorization refusal demonstrable rather than
+theoretical. Each company seeds several deliberately close-but-not-identical transactions so
+matching decisions are visible.
+
+### Permissions the app asks for
+
+Camera (photographing a receipt, and scanning a barcode), photo library (choosing an existing
+image), and notifications. Each is requested at the point of use, never at launch, and every denial
+path renders a specific message rather than a dead button.
 
 ## Quick start
 
@@ -36,16 +81,36 @@ There is no backend to configure. The server is a deterministic in-process fake
 ([`src/server/fake-server.ts`](src/server/fake-server.ts)) with a full failure-injection surface,
 driven from the app's **Session & simulation** screen.
 
-### A two-minute tour
+### The five-minute demo path
 
-1. Sign in as **Northwind**. Capture a receipt (any photo will do).
-2. Go to **Settings → Offline**, capture another, and submit it. Watch the list: the device column
-   says *Queued*, the server column says **Not received**. That gap is the point.
-3. Back **Online**, pull to refresh. The server column becomes *Confirmed* only now.
-4. Settings → **Inject a failure → Lost success response**. Submit a receipt: it fails. Set failure
-   back to *None* and retry the same receipt — you get "Already on the server", and no duplicate.
-5. Queue one offline, then **switch to Acme**. The queued receipt is gone from the list and cannot
-   be sent. Switch back and it uploads.
+Each step demonstrates one thing the brief asks for. Steps 2-5 are the ones worth watching.
+
+1. **Authorization is server-side** (~40s). On the sign-in screen, press **Try Acme Corporation
+   (not a member)** under *Kim Alvarez*. The button is deliberately enabled — hiding it would make
+   the client the authority. The server refuses with `NOT_A_MEMBER`. Now sign in as **Dana Reyes →
+   Northwind Traders**, which is allowed.
+
+2. **Local and remote state are different** (~60s). Settings → **Offline**. Capture a receipt (any
+   photo), fill in vendor / amount / date, **Save and queue**. On the list the row shows two
+   columns: *Queued* on this device, **Not received** on the server. Nothing has reached a server
+   and the app says so. Go back **Online** and pull to refresh — only now does the server column
+   read *Confirmed*.
+
+3. **A retry cannot duplicate** (~60s). Settings → **Inject a failure → Lost success response**.
+   Capture and submit: it fails, and the receipt stays unconfirmed. Set the failure back to
+   **None** and press **Try again** on the same receipt. You get *"Already on the server"* — the
+   server recognised the idempotency key and returned the original record. One receipt, not two.
+
+4. **A queued receipt cannot cross companies** (~60s). Go **Offline**, queue a receipt under
+   Northwind, then Settings → **Switch to Acme Corporation**. The queued receipt is gone from the
+   list and cannot be sent — it belongs to Northwind. Switch back and it uploads.
+
+5. **Extraction never overwrites a human** (~60s). Open a receipt → **Scan barcode or QR**. Point
+   it at any QR code. Whatever it reads, the "Applied" list reports *kept your own entry* for every
+   field you typed yourself, and fills only the blanks you left.
+
+Steps 1-4 need no camera. Step 5 works in the simulator if you drag a QR image into it, and is the
+only step that benefits from a real device.
 
 ---
 
@@ -140,6 +205,7 @@ There is no code path that writes `state: 'confirmed'` from a local decision.
 | Explicit money/date semantics | Integer minor units + ISO-4217 exponent; `DateOnly` and `Instant` are separate types | Enter `1.999` in USD — rejected, not silently rounded. Enter a JPY amount — no decimals |
 | Files are untrusted | [`validation.ts`](src/domain/validation.ts) sniffs magic bytes; the declared MIME type is a hint that loses when they disagree | See `PRODUCTION_QUARANTINE_BOUNDARY` in that file |
 | Secrets are not in plaintext storage | `expo-secure-store` only; the token never enters SQLite and `getPublicSession()` cannot leak it | `signOut()` empties the secret store |
+| Authorization is server-side | `issueToken` refuses a company the user is not a member of; every later guard compares against the *token's* company | Sign-in screen: "Try Acme (not a member)" as Kim |
 
 ---
 

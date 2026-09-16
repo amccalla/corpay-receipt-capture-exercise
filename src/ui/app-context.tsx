@@ -12,13 +12,13 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 
 import { newIdempotencyKey, newLocalId, shouldRotateIdempotencyKey, type SubmissionIntent } from '../domain/ids';
 import { applyLocalEvent } from '../domain/state-machine';
-import { EMPTY_PROVENANCE, type Company, type Instant, type ReceiptDraft, type Transaction } from '../domain/types';
+import { EMPTY_PROVENANCE, type Company, type Instant, type ReceiptDraft, type Transaction, type User } from '../domain/types';
 import { openDatabase } from '../data/db';
 import { ExpoSecretStore, InMemorySecretStore, SessionManager, type PublicSession } from '../data/session';
 import { SQLiteReceiptStore } from '../data/sqlite-store';
 import { InMemoryReceiptStore, type ReceiptStore } from '../data/store';
 import { FakeServer, type FailureInjection, type NetworkMode } from '../server/fake-server';
-import { COMPANIES, USERS } from '../server/seed';
+import { COMPANIES, MEMBERSHIPS, USERS } from '../server/seed';
 import { configureNotifications, notifyOnChange, requestNotificationPermission } from '../notify/notifier';
 import { SyncEngine, type SyncOutcome, type SyncReport } from '../sync/sync-engine';
 
@@ -41,6 +41,9 @@ export interface AppState {
   session: PublicSession | null;
   company: Company | null;
   companies: Company[];
+  users: User[];
+  /** The signed-in user, or null. Distinct from the company they are acting for. */
+  user: User | null;
   drafts: ReceiptDraft[];
   transactions: Transaction[];
   networkMode: NetworkMode;
@@ -49,8 +52,10 @@ export interface AppState {
 }
 
 export interface AppActions {
-  signIn(companyId: string): Promise<void>;
+  signIn(userId: string, companyId: string): Promise<void>;
   switchCompany(companyId: string): Promise<void>;
+  /** Client-side mirror of the server's rule, used only to explain the UI. */
+  isMember(userId: string, companyId: string): boolean;
   signOut(): Promise<void>;
   expireSession(): void;
   setNetworkMode(m: NetworkMode): void;
@@ -171,14 +176,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // ---- actions ------------------------------------------------------------
 
-  const signIn = useCallback(async (nextCompanyId: string) => {
+  const signIn = useCallback(async (userId: string, nextCompanyId: string) => {
     const session = sessionRef.current;
     const server = serverRef.current;
     if (!session || !server) return;
-    const user = USERS[0];
-    const token = server.issueToken(user.id, nextCompanyId, SESSION_TTL_MS);
+    // No client-side pre-check: the server decides, and a refusal surfaces as a
+    // thrown FakeServerError that the caller renders. Guarding here instead
+    // would make the button the authority, which is exactly backwards.
+    const token = server.issueToken(userId, nextCompanyId, SESSION_TTL_MS);
     await session.signIn({
-      userId: user.id,
+      userId,
       companyId: nextCompanyId,
       token,
       expiresAt: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
@@ -189,12 +196,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const session = sessionRef.current;
     const server = serverRef.current;
     if (!session || !server) return;
-    const user = USERS[0];
-    const token = server.issueToken(user.id, nextCompanyId, SESSION_TTL_MS);
+    const current = session.getPublicSession();
+    const userId = current?.userId ?? USERS[0].id;
+    // Throws NOT_A_MEMBER if this user cannot act for that company - the switch
+    // is refused by the server, not hidden by the client.
+    const token = server.issueToken(userId, nextCompanyId, SESSION_TTL_MS);
     // switchCompany destroys the old token before installing the new one, so
     // there is never a moment when both tenants' credentials are live.
     await session.switchCompany({
-      userId: user.id,
+      userId,
       companyId: nextCompanyId,
       token,
       expiresAt: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
@@ -352,11 +362,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [companyId],
   );
 
+  const user = useMemo(
+    () => USERS.find((u) => u.id === session?.userId) ?? null,
+    [session?.userId],
+  );
+
+  const isMember = useCallback(
+    (userId: string, cid: string) => MEMBERSHIPS.some((m) => m.userId === userId && m.companyId === cid),
+    [],
+  );
+
   const value: AppContextValue = {
     ready, bootError, ephemeralStorage, session, company, companies: COMPANIES,
+    users: USERS, user,
     drafts, transactions, networkMode, failureInjection, syncing,
     actions: {
-      signIn, switchCompany, signOut, expireSession, setNetworkMode, setFailureInjection,
+      signIn, switchCompany, signOut, expireSession, setNetworkMode, setFailureInjection, isMember,
       createDraft, patchDraft, submitDraft, syncNow, refresh, getDraft,
     },
   };

@@ -36,7 +36,7 @@
 
 import type { Instant, Receipt, ReceiptMetadata, ServerState, Transaction } from '../domain/types';
 import { extractFromReceipt, isLowConfidence, type OcrResult } from './ocr';
-import { seedTransactions } from './seed';
+import { MEMBERSHIPS, seedTransactions } from './seed';
 
 // ---------------------------------------------------------------------------
 // Public surface
@@ -65,6 +65,8 @@ export type ServerErrorCode =
   | 'FILE_TOO_LARGE'
   | 'UNSUPPORTED_TYPE'
   | 'COMPANY_MISMATCH'
+  /** The user is not a member of the company they asked to act for. */
+  | 'NOT_A_MEMBER'
   | 'TRANSACTION_ALREADY_MATCHED'
   | 'SERVER_ERROR';
 
@@ -306,7 +308,36 @@ export class FakeServer {
    * the client must never parse it; the company binding lives here, server
    * side, which is the point.
    */
+  /**
+   * Whether this user may act for this company at all.
+   *
+   * Membership lives HERE, server-side, and is the authority. The client may
+   * use `isMember` to avoid offering an action that will fail, but a client
+   * that asks anyway is refused — possession of a button, a deep link or a
+   * cached record is not authorization.
+   */
+  isMember(userId: string, companyId: string): boolean {
+    return MEMBERSHIPS.some((m) => m.userId === userId && m.companyId === companyId);
+  }
+
+  /**
+   * Mint a token, but only for a company this user actually belongs to.
+   *
+   * Without this check the tenancy story had a hole big enough to walk through:
+   * every downstream guard compares a request's company against the TOKEN's
+   * company, so a token minted for a company the user was never a member of
+   * would have passed every one of them. The seeded memberships are
+   * deliberately asymmetric — Dana belongs to both companies, Kim only to
+   * Northwind, Sam only to Acme — so the refusal is demonstrable, not theoretical.
+   */
   issueToken(userId: string, companyId: string, ttlMs: number): string {
+    if (!this.isMember(userId, companyId)) {
+      throw new FakeServerError(
+        'NOT_A_MEMBER',
+        `${userId} is not a member of ${companyId}.`,
+        false,
+      );
+    }
     this.tokenCounter += 1;
     const token = `tok_${this.tokenCounter}`;
     this.tokens.set(token, {

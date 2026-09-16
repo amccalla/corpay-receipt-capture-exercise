@@ -1,6 +1,6 @@
 import { Link, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { FlatList, RefreshControl, Text, View } from 'react-native';
+import { FlatList, RefreshControl, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { formatMinorUnits } from '@/domain/money';
@@ -64,9 +64,24 @@ function ReceiptRow({ draft, onPress }: { draft: ReceiptDraft; onPress: () => vo
 export default function ReceiptListScreen() {
   const router = useRouter();
   const p = usePalette();
-  const { ready, bootError, ephemeralStorage, session, company, companies, drafts, networkMode, syncing, actions } = useApp();
+  const { ready, bootError, ephemeralStorage, session, company, companies, users, drafts, networkMode, syncing, actions } = useApp();
   const [refreshing, setRefreshing] = useState(false);
   const [lastSync, setLastSync] = useState<string | null>(null);
+  const [signInError, setSignInError] = useState<string | null>(null);
+
+  const attemptSignIn = useCallback(
+    async (userId: string, cid: string) => {
+      setSignInError(null);
+      try {
+        await actions.signIn(userId, cid);
+      } catch (err) {
+        // The server threw NOT_A_MEMBER. Surfaced verbatim so the demo shows
+        // where the decision was actually made.
+        setSignInError(err instanceof Error ? err.message : 'Sign-in was refused.');
+      }
+    },
+    [actions],
+  );
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -89,15 +104,48 @@ export default function ReceiptListScreen() {
 
   if (!session) {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: p.bg, padding: 16, gap: 12 }}>
-        <Title>Choose a company to sign in</Title>
-        <Muted>
-          Two companies are seeded. Receipts captured under one are never visible or submittable
-          under the other — that boundary is the point of the exercise, so it is easy to test here.
-        </Muted>
-        {companies.map((c) => (
-          <Button key={c.id} title={c.name} onPress={() => void actions.signIn(c.id)} />
-        ))}
+      <SafeAreaView style={{ flex: 1, backgroundColor: p.bg }} edges={['bottom']}>
+        <ScrollView contentContainerStyle={{ padding: 16, gap: 14, paddingBottom: 40 }}>
+          <Title>Sign in</Title>
+          <Muted>
+            Three synthetic users and two companies are seeded, with deliberately uneven
+            membership. Dana belongs to both companies; Kim to Northwind only; Sam to Acme only.
+            Pick a pairing — including one that should not be allowed — and the server will decide.
+          </Muted>
+
+          {signInError ? <Banner tone="danger">{signInError}</Banner> : null}
+
+          {users.map((u) => (
+            <Card key={u.id}>
+              <Title>{u.displayName}</Title>
+              <View style={{ height: 2 }} />
+              <Muted>{u.email}</Muted>
+              <View style={{ height: 10 }} />
+              {companies.map((c) => {
+                const member = actions.isMember(u.id, c.id);
+                return (
+                  <View key={c.id} style={{ marginTop: 8 }}>
+                    <Button
+                      title={member ? `Sign in to ${c.name}` : `Try ${c.name} (not a member)`}
+                      variant={member ? 'primary' : 'secondary'}
+                      accessibilityLabel={
+                        member
+                          ? `Sign in as ${u.displayName} to ${c.name}`
+                          : `Attempt to sign in as ${u.displayName} to ${c.name}, which they are not a member of`
+                      }
+                      onPress={() => void attemptSignIn(u.id, c.id)}
+                    />
+                  </View>
+                );
+              })}
+            </Card>
+          ))}
+
+          <Muted>
+            The &quot;not a member&quot; buttons are left enabled on purpose. Hiding them would make
+            the client the authority; leaving them proves the refusal comes from the server.
+          </Muted>
+        </ScrollView>
       </SafeAreaView>
     );
   }
