@@ -58,11 +58,11 @@ export default function ReceiptDetailScreen() {
     try {
       const outcome = await actions.submitDraft(draft.localId);
       if (outcome?.kind === 'failed') {
-        Alert.alert('Not accepted', outcome.draft.lastError ?? 'The server rejected this receipt.');
+        Alert.alert('Not accepted', outcome.draft.lastError ?? 'This receipt was rejected.');
       } else if (outcome?.kind === 'advanced' && outcome.deduped) {
         Alert.alert(
-          'Already on the server',
-          'The server had already recorded this receipt from an earlier attempt, so nothing was duplicated.',
+          'Already recorded',
+          'This receipt was already recorded from an earlier attempt, so nothing was duplicated.',
         );
       }
     } finally {
@@ -174,7 +174,7 @@ export default function ReceiptDetailScreen() {
           <Card>
             <SectionTitle>Match to a transaction</SectionTitle>
             <Muted>
-              Matching is sent with the submission. The server saves it, and will refuse a transaction
+              The match is part of the submission. The backend records it, and refuses a transaction
               that already belongs to another receipt.
             </Muted>
 
@@ -284,7 +284,7 @@ export default function ReceiptDetailScreen() {
           <Card>
             <SectionTitle>Matched</SectionTitle>
             <Muted>
-              The server saved a match to{' '}
+              The backend recorded a match to{' '}
               {transactions.find((t) => t.id === draft.matchedTransactionId)?.merchant ??
                 draft.matchedTransactionId}
               .

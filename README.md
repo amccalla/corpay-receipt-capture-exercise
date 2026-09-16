@@ -18,7 +18,7 @@ Design rationale, assumptions, tradeoffs, deliberate omissions and next steps li
 | **Host** | macOS 26.6 (Darwin 25.6), Xcode 27.0, Node 22.23.1, npm 10.9.8 |
 | **Verified on the simulator** | App launches and renders; sign-in screen shows the seeded users and companies; deep-link routing works; Metro bundles 1696 modules; **no runtime errors** |
 | **Verified by test, not by hand** | The five demo steps below. Each maps to end-to-end tests against the real engine, store, session and server (see [Testing](#testing)). |
-| **Verified** | 1046 automated tests; `tsc --noEmit` clean under `strict`; ESLint clean |
+| **Verified** | 1055 automated tests; `tsc --noEmit` clean under `strict`; ESLint clean |
 | **Not verified on device** | A physical handset of either platform |
 | **Simulated, not real** | The backend. There is no network call anywhere in `src/` — the "server" is an in-process object |
 | **Untested in Expo Go** | Notification *delivery*. Expo Go dropped push support in SDK 53 — on Android the import itself throws, which crashed the app until it was guarded. The policy and route validation are unit-tested; delivery needs a development build |
@@ -220,7 +220,7 @@ There is no code path that writes `state: 'confirmed'` from a local decision.
 | Local and remote state are visibly different | [`src/ui/receipt-status.ts`](src/ui/receipt-status.ts) derives two independent columns; the server column reads `serverReceiptId`, never `state` | Every row and the detail screen show **On this device** and **On the server** side by side |
 | Retrying does not duplicate | Stable `idempotencyKey` per draft + server dedupe on `(companyId, idempotencyKey)` | Inject *Lost success response*, then retry |
 | Company switch cannot upload under the wrong company | Store is scoped by signature; `getTokenForCompany()` refuses a mismatch; server returns `COMPANY_MISMATCH` independently | Queue offline, switch company, try to sync |
-| Explicit money/date semantics | Integer minor units + ISO-4217 exponent; `DateOnly` and `Instant` are separate types | Enter `1.999` in USD — rejected, not silently rounded. Enter a JPY amount — no decimals |
+| Explicit money/date semantics | Integer minor units + ISO-4217 exponent; `DateOnly` and `Instant` are separate types | Enter `1.999` in USD — rejected, not silently rounded. Pick JPY — no decimals; pick BHD — three |
 | Files are untrusted | [`validation.ts`](src/domain/validation.ts) sniffs magic bytes; the declared MIME type is a hint that loses when they disagree | See `PRODUCTION_QUARANTINE_BOUNDARY` in that file |
 | Secrets are not in plaintext storage | `expo-secure-store` only; the token never enters SQLite and `getPublicSession()` cannot leak it | `signOut()` empties the secret store |
 | Authorization is server-side | `issueToken` refuses a company the user is not a member of; every later guard compares against the *token's* company | Sign-in screen: "Try Acme (not a member)" as Kim |
@@ -515,7 +515,7 @@ npm run typecheck
 npm run lint
 ```
 
-1046 tests across 21 suites.
+1055 tests across 22 suites.
 
 | Suite | Covers |
 | --- | --- |
@@ -539,6 +539,7 @@ npm run lint
 | `notify/__tests__/notifier` | Deep-link validation against open-redirect payloads |
 | `notify/__tests__/availability` | The Expo Go import guard that crashed Android |
 | `ui/__tests__/image-edit` | Crop geometry, including degenerate and out-of-bounds rects |
+| `ui/__tests__/currencies` | The picker offers exactly what the parser accepts |
 
 ---
 

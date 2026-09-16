@@ -13,7 +13,8 @@
         "NSCameraUsageDescription": "Used to photograph receipts so they can be attached to an expense.",
         "NSPhotoLibraryUsageDescription": "Used to choose an existing photo of a receipt to attach to an expense."
       },
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.disruptlogicdrew.corpay-receipt-capture-exercise"
     },
     "android": {
       "adaptiveIcon": {
@@ -26,7 +27,8 @@
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.READ_MEDIA_IMAGES"
-      ]
+      ],
+      "package": "com.disruptlogicdrew.corpayreceiptcaptureexercise"
     },
     "web": {
       "output": "static",
@@ -48,7 +50,8 @@
         "expo-image-picker",
         {
           "photosPermission": "Used to choose an existing photo of a receipt to attach to an expense.",
-          "cameraPermission": "Used to photograph receipts so they can be attached to an expense."
+          "cameraPermission": "Used to photograph receipts so they can be attached to an expense.",
+          "microphonePermission": false
         }
       ],
       [

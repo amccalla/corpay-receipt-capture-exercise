@@ -47,7 +47,7 @@ exponent, which the decoder refuses rather than silently scaling.
 every wake-up and atomic partial updates. A blob store gives neither.
 
 **A thin UI over thick pure logic.** Screens are deliberately dumb; the interesting rules live in
-pure modules that take their clock and randomness as parameters. That is what makes 1046 tests fast
+pure modules that take their clock and randomness as parameters. That is what makes 1055 tests fast
 and deterministic, and it is why there are few component tests — the logic a component test would
 cover has been moved somewhere it can be tested properly.
 

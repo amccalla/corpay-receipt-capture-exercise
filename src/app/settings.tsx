@@ -1,8 +1,10 @@
+import { useRouter } from 'expo-router';
+import { useCallback, useMemo } from 'react';
 import { ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useApp } from '@/ui/app-context';
-import { Banner, Button, Card, Muted, Row, SectionTitle, Title } from '@/ui/components';
+import { Banner, Button, Card, Muted, NetworkPill, Row, SectionTitle, Title } from '@/ui/components';
 import { usePalette } from '@/ui/theme';
 import type { FailureInjection } from '@/server/fake-server';
 
@@ -46,7 +48,25 @@ const FAILURES: { key: FailureInjection; label: string; blurb: string }[] = [
 
 export default function SettingsScreen() {
   const p = usePalette();
-  const { session, company, companies, networkMode, failureInjection, drafts, actions } = useApp();
+  const router = useRouter();
+  const { session, user, company, companies, networkMode, failureInjection, drafts, actions } = useApp();
+
+  // Only companies this user actually belongs to. Offering a company the server
+  // would refuse is the "hidden client button" mistake in reverse: a control
+  // that exists purely to fail.
+  const myCompanies = useMemo(
+    () => (session ? companies.filter((c) => actions.isMember(session.userId, c.id)) : []),
+    [companies, session, actions],
+  );
+  const canSwitch = myCompanies.length > 1;
+
+  // Signing out must leave this screen: the session is gone, so every control
+  // here refers to something that no longer exists.
+  const signOut = useCallback(async () => {
+    await actions.signOut();
+    router.dismissAll();
+    router.replace('/');
+  }, [actions, router]);
 
   const pendingElsewhere = drafts.filter((d) => d.state === 'queued' || d.state === 'failed').length;
 
@@ -54,7 +74,10 @@ export default function SettingsScreen() {
     <SafeAreaView style={{ flex: 1, backgroundColor: p.bg }} edges={['bottom']}>
       <ScrollView contentContainerStyle={{ padding: 16, gap: 14, paddingBottom: 40 }}>
         <Card>
-          <SectionTitle>Connectivity</SectionTitle>
+          <Row style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+            <SectionTitle>Connectivity</SectionTitle>
+            <NetworkPill online={networkMode === 'online'} />
+          </Row>
           <Muted>
             Offline submissions are written to the device and never reported as confirmed. This is the
             switch to prove that with.
@@ -83,11 +106,13 @@ export default function SettingsScreen() {
           <SectionTitle>Company</SectionTitle>
           <Title>{company?.name ?? 'Signed out'}</Title>
           <View style={{ height: 6 }} />
-          <Muted>
-            Switching company destroys the current token before issuing a new one. Anything queued
-            under the previous company stays with that company and cannot be uploaded from here.
-          </Muted>
-          {pendingElsewhere > 0 ? (
+          {canSwitch ? (
+            <Muted>
+              Switching company destroys the current token before issuing a new one. Anything queued
+              under the previous company stays with that company and cannot be submitted from here.
+            </Muted>
+          ) : null}
+          {canSwitch && pendingElsewhere > 0 ? (
             <View style={{ marginTop: 10 }}>
               <Banner tone="pending">
                 {pendingElsewhere} receipt{pendingElsewhere === 1 ? '' : 's'} still waiting to be sent
@@ -95,17 +120,26 @@ export default function SettingsScreen() {
               </Banner>
             </View>
           ) : null}
-          <View style={{ gap: 8, marginTop: 12 }}>
-            {companies.map((c) => (
-              <Button
-                key={c.id}
-                title={c.id === session?.companyId ? `${c.name} (current)` : `Switch to ${c.name}`}
-                selected={c.id === session?.companyId}
-                variant={c.id === session?.companyId ? 'primary' : 'secondary'}
-                onPress={() => void actions.switchCompany(c.id)}
-              />
-            ))}
-          </View>
+          {canSwitch ? (
+            <View style={{ gap: 8, marginTop: 12 }}>
+              {myCompanies.map((c) => (
+                <Button
+                  key={c.id}
+                  title={c.id === session?.companyId ? `${c.name} (current)` : `Switch to ${c.name}`}
+                  selected={c.id === session?.companyId}
+                  variant={c.id === session?.companyId ? 'primary' : 'secondary'}
+                  onPress={() => void actions.switchCompany(c.id)}
+                />
+              ))}
+            </View>
+          ) : (
+            <View style={{ marginTop: 10 }}>
+              <Muted>
+                {user?.displayName ?? 'This user'} belongs to one company, so there is nothing to
+                switch to. Sign out to act as someone else.
+              </Muted>
+            </View>
+          )}
         </Card>
 
         <Card>
@@ -127,7 +161,7 @@ export default function SettingsScreen() {
           </Muted>
           <View style={{ gap: 8, marginTop: 12 }}>
             <Button title="Expire my token now" variant="secondary" onPress={() => actions.expireSession()} />
-            <Button title="Sign out" variant="danger" onPress={() => void actions.signOut()} />
+            <Button title="Sign out" variant="danger" onPress={() => void signOut()} />
           </View>
         </Card>
 

@@ -119,6 +119,17 @@ const TWO_DECIMAL_CURRENCIES: ReadonlySet<CurrencyCode> = new Set([
  * that invariant quietly stops being true. Normalising input is the caller's
  * job and should be visible in the caller.
  */
+/**
+ * Every currency this app will accept, sorted. Exported so the UI offers
+ * exactly what the parser supports — a picker listing a code that
+ * `exponentFor` would throw on is a crash waiting for a user to find it.
+ */
+export const SUPPORTED_CURRENCIES: readonly CurrencyCode[] = [
+  ...TWO_DECIMAL_CURRENCIES,
+  ...ZERO_DECIMAL_CURRENCIES,
+  ...THREE_DECIMAL_CURRENCIES,
+].sort();
+
 export function isSupportedCurrency(c: string): boolean {
   return (
     TWO_DECIMAL_CURRENCIES.has(c) ||

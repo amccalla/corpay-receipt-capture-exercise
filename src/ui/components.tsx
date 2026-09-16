@@ -113,3 +113,31 @@ export function Banner({ tone, children }: { tone: Tone; children: React.ReactNo
     </View>
   );
 }
+
+/**
+ * Connectivity at a glance. A coloured dot plus one word, because this is
+ * ambient state the user glances at, not a sentence they read.
+ *
+ * The dot is never the only signal — the word carries the same meaning for
+ * anyone who cannot distinguish the colours, and the pair is announced as one
+ * label rather than as a stray bullet character.
+ */
+export function NetworkPill({ online }: { online: boolean }) {
+  const p = usePalette();
+  const color = online ? p.success : p.danger;
+  const bg = online ? p.successBg : p.dangerBg;
+  return (
+    <View
+      accessible
+      accessibilityRole="text"
+      accessibilityLabel={online ? 'Online' : 'Offline'}
+      style={{
+        flexDirection: 'row', alignItems: 'center', gap: 7, alignSelf: 'flex-start',
+        backgroundColor: bg, paddingVertical: 6, paddingHorizontal: 11, borderRadius: 999,
+      }}
+    >
+      <View style={{ width: 9, height: 9, borderRadius: 999, backgroundColor: color }} />
+      <Text style={{ color, fontWeight: '700', fontSize: 13 }}>{online ? 'Online' : 'Offline'}</Text>
+    </View>
+  );
+}

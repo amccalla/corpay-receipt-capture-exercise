@@ -63,12 +63,12 @@ export function describeStatus(d: ReceiptDraft): StatusDisplay {
   if (d.serverReceiptId === null) {
     const explanation =
       d.state === 'queued'
-        ? 'Saved on this device. Nothing has reached the server yet — it will be sent when you are back online.'
+        ? 'Saved on this device. The backend has no record of it yet.'
         : d.state === 'uploading'
-          ? 'Being sent now. The server has not acknowledged it yet.'
+          ? 'Submitting. The backend has not acknowledged it yet.'
           : d.state === 'failed'
-            ? `Not received by the server. ${d.lastError ?? ''}`.trim()
-            : 'Not submitted yet. This exists only on this device.';
+            ? `The backend has no record of it. ${d.lastError ?? ''}`.trim()
+            : 'Not submitted. This exists only on this device.';
 
     return {
       deviceLabel,
@@ -99,8 +99,8 @@ export function describeStatus(d: ReceiptDraft): StatusDisplay {
       serverLabel: 'Confirmed',
       serverTone: 'success',
       explanation: d.matchedTransactionId
-        ? 'The server created the expense record and saved the match.'
-        : 'The server created the expense record. It is not matched to a transaction.',
+        ? 'The backend created the expense record and saved the match.'
+        : 'The backend created the expense record. It is not matched to a transaction.',
       action: null,
       actionLabel: null,
     };
@@ -113,7 +113,7 @@ export function describeStatus(d: ReceiptDraft): StatusDisplay {
       serverLabel: 'Needs review',
       serverTone: 'warning',
       explanation:
-        'The server received the file but could not confidently read it. Check the details and confirm.',
+        'The backend could not confidently read this receipt. Check the details and confirm.',
       action: 'review',
       actionLabel: 'Review details',
     };
@@ -126,7 +126,7 @@ export function describeStatus(d: ReceiptDraft): StatusDisplay {
       serverLabel: 'Processing',
       serverTone: 'pending',
       explanation:
-        'The server has the file and is working on it. It is not confirmed until the expense record exists.',
+        'The backend has it and is working on it. Not confirmed until the expense record exists.',
       action: null,
       actionLabel: null,
     };
@@ -141,7 +141,7 @@ export function describeStatus(d: ReceiptDraft): StatusDisplay {
     serverLabel: 'Partially received',
     serverTone: 'warning',
     explanation:
-      'The server previously accepted this receipt, but the last attempt did not complete. ' +
+      'The backend previously accepted this receipt, but the last attempt did not complete. ' +
       'Retrying is safe — it will not create a duplicate.',
     action: 'retry',
     actionLabel: 'Try again',

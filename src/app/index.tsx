@@ -7,7 +7,7 @@ import { formatMinorUnits } from '@/domain/money';
 import { formatDateOnlyHuman } from '@/domain/dates';
 import type { ReceiptDraft } from '@/domain/types';
 import { useApp } from '@/ui/app-context';
-import { Badge, Banner, Button, Card, Muted, Row, SectionTitle, Title } from '@/ui/components';
+import { Badge, Banner, Button, Card, Muted, NetworkPill, Row, SectionTitle, Title } from '@/ui/components';
 import { describeStatus } from '@/ui/receipt-status';
 import { usePalette } from '@/ui/theme';
 
@@ -32,7 +32,7 @@ function ReceiptRow({ draft, onPress }: { draft: ReceiptDraft; onPress: () => vo
       {/*
         The two-column status. This is the brief's "local and remote state are
         visibly different" made literal: the user always sees both, and the
-        right-hand column says "Not received" until the server proves otherwise.
+        right-hand column says "Not received" until the backend proves otherwise.
       */}
       <View
         accessible
@@ -177,11 +177,7 @@ export default function ReceiptListScreen() {
               </Link>
             </Row>
 
-            <Banner tone={networkMode === 'online' ? 'neutral' : 'pending'}>
-              {networkMode === 'online'
-                ? 'Online — submissions go straight to the server.'
-                : 'Offline — submissions are queued durably on this device and sent later.'}
-            </Banner>
+            <NetworkPill online={networkMode === 'online'} />
 
             {lastSync ? <Muted>{lastSync}</Muted> : null}
 

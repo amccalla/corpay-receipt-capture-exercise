@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { ActivityIndicator, Alert, Image, ScrollView, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { isValidDateOnly } from '@/domain/dates';
@@ -9,10 +9,15 @@ import { parseAmountToMinorUnits } from '@/domain/money';
 import type { ReceiptDraft } from '@/domain/types';
 import { useApp } from '@/ui/app-context';
 import { Banner, Button, Card, Muted, Row, SectionTitle } from '@/ui/components';
+import { CurrencyPicker } from '@/ui/currency-picker';
 import { intakeFile } from '@/ui/file-intake';
 import { usePalette } from '@/ui/theme';
 
-const CURRENCIES = ['USD', 'EUR', 'GBP', 'JPY'];
+/** Example input per currency, for the amount field's hint. */
+const SYMBOL_HINTS: Readonly<Record<string, string>> = {
+  USD: '$19.99', EUR: '\u20ac19.99', GBP: '\u00a310.50',
+  JPY: '\u00a5500', INR: '\u20b9250', KRW: '\u20a95000',
+};
 
 export default function CaptureScreen() {
   const router = useRouter();
@@ -27,6 +32,7 @@ export default function CaptureScreen() {
   // recording them identically would lock an unconsidered 'USD' in as a human
   // decision that no later barcode or OCR pass could correct.
   const [currencyChosen, setCurrencyChosen] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [dateText, setDateText] = useState('');
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
@@ -91,6 +97,10 @@ export default function CaptureScreen() {
     [actions, ensureDraft],
   );
 
+  // Shown as a hint so the symbol affordance is discoverable. A symbol is only
+  // accepted when it matches the selected currency - see money.ts.
+  const currencyHint = SYMBOL_HINTS[currency] ?? `${currency} 19.99`;
+
   const amountParse = amountText.trim() ? parseAmountToMinorUnits(amountText, currency) : null;
   const amountError = amountParse && !amountParse.ok ? amountParse.error : null;
   const dateError = dateText.trim() && !isValidDateOnly(dateText.trim()) ? 'Use YYYY-MM-DD.' : null;
@@ -122,7 +132,7 @@ export default function CaptureScreen() {
         if (submit) {
           const outcome = await actions.submitDraft(d.localId);
           if (outcome?.kind === 'failed') {
-            Alert.alert('Not accepted', outcome.draft.lastError ?? 'The server rejected this receipt.');
+            Alert.alert('Not accepted', outcome.draft.lastError ?? 'This receipt was rejected.');
           }
         }
         router.back();
@@ -207,31 +217,26 @@ export default function CaptureScreen() {
                 placeholder="19.99"
                 keyboardType="decimal-pad"
                 error={amountError}
+                hint={`A ${currency} symbol or code is accepted, e.g. ${currencyHint}`}
               />
             </View>
             <View style={{ flex: 1 }}>
               <Text style={{ fontSize: 11, fontWeight: '800', letterSpacing: 0.8, color: p.textMuted, marginBottom: 6, marginTop: 4 }}>
                 CURRENCY
               </Text>
-              <Row gap={4} style={{ flexWrap: 'wrap' }}>
-                {CURRENCIES.map((c) => (
-                  <Text
-                    key={c}
-                    onPress={() => {
-                      setCurrency(c);
-                      setCurrencyChosen(true);
-                    }}
-                    style={{
-                      paddingVertical: 6, paddingHorizontal: 9, borderRadius: 6, overflow: 'hidden',
-                      backgroundColor: c === currency ? p.accent : p.surfaceAlt,
-                      color: c === currency ? p.accentText : p.text,
-                      fontWeight: '700', fontSize: 12,
-                    }}
-                  >
-                    {c}
-                  </Text>
-                ))}
-              </Row>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Currency: ${currency}. Double tap to change.`}
+                onPress={() => setPickerOpen(true)}
+                style={{
+                  borderWidth: 1, borderColor: p.border, backgroundColor: p.bg,
+                  borderRadius: 8, paddingHorizontal: 11, paddingVertical: 11,
+                  flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+                }}
+              >
+                <Text style={{ color: p.text, fontSize: 15, fontWeight: '700' }}>{currency}</Text>
+                <Text style={{ color: p.textMuted, fontSize: 13 }}>▾</Text>
+              </Pressable>
             </View>
           </Row>
 
@@ -259,10 +264,20 @@ export default function CaptureScreen() {
 
         <Muted>
           {networkMode === 'offline'
-            ? 'You are offline. This will be stored on the device and sent when you are back online — it will not be reported as confirmed until the server says so.'
-            : 'This will be sent to the server now. It is only marked confirmed once the server has created the record.'}
+            ? 'Offline. This is saved on the device and stays queued until you are online again. It will not read as confirmed until the backend has actually recorded it.'
+            : 'This is submitted now. It only reads as confirmed once the backend has created the record.'}
         </Muted>
       </ScrollView>
+
+      <CurrencyPicker
+        visible={pickerOpen}
+        value={currency}
+        onClose={() => setPickerOpen(false)}
+        onSelect={(c) => {
+          setCurrency(c);
+          setCurrencyChosen(true);
+        }}
+      />
     </SafeAreaView>
   );
 }
