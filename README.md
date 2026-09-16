@@ -36,16 +36,8 @@ Node 20+ and npm. Then either path:
 
 Nothing else: no backend to start, no `.env`, no API key, no base URL.
 
-**Yes, this runs on Android.** Both platforms are supported and both were launched and checked;
-there is no iOS-only code path. Two differences are worth knowing:
-
-- Android needed a real fix. In Expo Go on Android, *importing* `expo-notifications` throws outright
-  (its push-token auto-registration runs at import time, and remote push was removed from Expo Go in
-  SDK 53) — the app red-boxed on startup. iOS only warned for the same import, so this was invisible
-  until the app was actually run on an emulator. The module is now loaded only where it is
-  supported; see [`notificationsAvailable`](src/notify/notifier.ts).
-- Notification *delivery* therefore works on neither platform under Expo Go. Use `npx expo run:ios`
-  or `npx expo run:android` for that.
+Notification *delivery* does not work under Expo Go on either platform. Use `npx expo run:ios` or
+`npx expo run:android` for that.
 
 ### Synthetic demo data
 
@@ -153,10 +145,30 @@ The brief asks for this explicitly.
 
 ## Architecture
 
-The dependency direction is strictly inward: UI → sync → data/server → domain. The domain layer has
-no React, no Expo, no I/O, and no clock or randomness of its own — every time- or
-randomness-dependent function takes it as a parameter. That is what makes the interesting rules
-testable as pure functions.
+**Ports and adapters (hexagonal), with a functional core and an imperative shell.** Not MVVM —
+there are no ViewModels, and no two-way binding. The layering is what earns its keep here, so it is
+worth naming precisely:
+
+- **Functional core.** `src/domain/` is pure: no React, no Expo, no I/O, and no clock or randomness
+  of its own — every time- or randomness-dependent function takes it as a parameter. This is where
+  the money rules, calendar arithmetic, state machine, provenance ladder and matching policy live,
+  and it is why they can be tested as plain functions and mutation-audited cheaply.
+- **Ports.** `ReceiptStore` and `SecretStore` are interfaces the core and the sync layer depend on.
+  Neither names a technology.
+- **Adapters.** `SQLiteReceiptStore` / `InMemoryReceiptStore`, and `ExpoSecretStore` /
+  `InMemorySecretStore`. The in-memory pair are not test doubles bolted on afterwards — they are
+  full implementations of the same contract, which is what lets the tenancy rules be verified
+  without a device. `FakeServer` is an adapter in the same sense, and a real HTTP client would be
+  another.
+- **Application layer.** `SyncEngine` orchestrates the ports and is where the runtime invariants are
+  enforced. It depends on interfaces only, which is why swapping the fake server for a real API
+  would not touch it.
+- **Imperative shell.** `src/ui/` and `src/app/` — React function components with unidirectional
+  data flow through a single context that exposes state plus explicit actions. Deliberately thin;
+  any logic worth testing has been pushed inward.
+
+The dependency direction is strictly inward: UI → sync → data/server → domain. Nothing in the domain
+knows that React, Expo, SQLite or a server exists.
 
 | Path | Responsibility |
 | --- | --- |
@@ -430,43 +442,6 @@ device.
 - Barcode *decoding* is real and tested; barcode *scanning* depends on the device camera and is only
   exercised on a simulator or handset.
 
-### The testing split
-
-**Pure logic** is where the density is, because that is where the rules live and where tests are
-fast and deterministic. Money parsing, calendar arithmetic, magic-byte sniffing, match scoring,
-idempotency rotation, and the state-machine transition tables are all pure functions tested directly.
-The state-machine tests build the full (state × event) cross-product so a future event cannot be
-added without being covered — including the exhaustive assertion that no local event can ever
-produce a server state.
-
-**Integration** is the sync engine against a real store, real session, and the fake server with an
-injected clock. This is where the edge cases are proven end to end: lost response, auth expiry,
-company switch, permanent-vs-transient rejection, double match.
-
-**Components** are thin by design, so they get little direct testing — the logic they would test has
-been pushed into `receipt-status.ts`, which *is* tested. I would rather have a well-tested pure
-function and a dumb renderer than a component test asserting on a rendered string.
-
-**E2E** is absent. Detox is the right tool and the offline → switch-company → back sequence is the
-first thing I would cover.
-
-The test suites were additionally **mutation-audited**: invariants were deliberately broken in the
-implementation to confirm the tests actually fail. A test that passes against a broken
-implementation is worse than no test, because it manufactures confidence.
-
-That practice earned its keep twice. In Phase 1 a 645-test green suite survived six sabotages of the
-state machine — all of them *field-blanking*, because the tests only asserted what a transition
-changes and never what it must preserve. In Phase 2 the five highest-value invariants were each
-broken deliberately and every one was caught:
-
-| Sabotage | Tests that failed |
-| --- | --- |
-| Provenance precedence disabled | 23 |
-| Blocked candidates made auto-selectable | 2 |
-| Ambiguity guard disabled | 4 |
-| GS1 GTIN treated as variable-length | 15 |
-| Amount leaked into a notification body | 6 |
-
 ### Deployment and operations
 
 There is nothing to deploy — the app is a client with an in-process fake, so a reviewer needs only
@@ -550,8 +525,7 @@ npm run typecheck
 npm run lint
 ```
 
-1046 tests across 21 suites. The split is deliberate — see
-[The testing split](#the-testing-split) above.
+1046 tests across 21 suites.
 
 | Suite | Covers |
 | --- | --- |
@@ -590,8 +564,6 @@ build materially, including in ways that were wrong.
 | --- | --- | --- | --- |
 | Claude Opus 5 | Claude Code, desktop app | Implementation, test authoring, adversarial review | Agent (interactive), with a workflow orchestrator for parallel subagents |
 | Claude subagents | Same model, spawned by the orchestrator | Parallel module implementation; independent review; mutation auditing | Agent (programmatic fan-out) |
-| `pypdf` 6.18.1 | Throwaway Python venv | Reading the PDF brief | CLI |
-| TypeScript 6.0 (`tsc --noEmit`) | Project-local, `strict` | Type verification, and as an API oracle for unfamiliar SDK surfaces | CLI |
 | Jest 29 + `jest-expo` 57 | Project-local | Test harness | CLI |
 | ESLint 9 + `eslint-config-expo` | Project-local | Lint | CLI |
 | Metro / Expo CLI | SDK 57 | Bundle verification, typed-route generation | CLI |
@@ -603,10 +575,6 @@ and interface drift is the main failure mode when several agents work in paralle
 implemented modules that depended only on that frozen contract — six in Phase 1, four in Phase 2 —
 each with an exact export signature and colocated tests. I wrote the persistence layer, sync engine
 and all UI myself, since those carry the cross-cutting decisions.
-
-Every module was then **adversarially reviewed**, and every test suite **mutation-audited**: the
-implementation was deliberately broken to confirm the tests failed. Harnesses were `tsc --noEmit`
-under `strict`, Jest, ESLint, and a real Metro bundle.
 
 Each agent prompt carried the brief's six non-negotiables and six edge cases verbatim, plus the
 frozen types. Agents were told to report a suspected defect in the contract rather than work around
@@ -631,10 +599,15 @@ the only reliable oracle — I now probe the installed type definitions rather t
 methods that did not exist and had never been specified. Nothing but `tsc` caught it.
 
 **Bundling clean on one platform proved nothing about the other.** The app crashed on launch on
-Android — importing `expo-notifications` throws in Expo Go there, while iOS only warns. It had
-bundled, type-checked, linted and passed 1041 tests on both platforms throughout. Only running it on
-an emulator found it, which is the same lesson as the mutation testing: verification has to actually
-execute the thing.
+Android — a red box before a single screen rendered. In Expo Go on Android, *importing*
+`expo-notifications` throws outright: its push-token auto-registration runs at import time, and
+remote push was removed from Expo Go in SDK 53. iOS only warns for the identical import, so nothing
+caught it — the project had bundled, type-checked, linted and passed 1041 tests on both platforms
+throughout. The fix guards the import itself rather than the calls, behind
+[`notificationsAvailable()`](src/notify/notifier.ts), so the module is loaded only where it is
+supported and every entry point returns a benign result elsewhere — notably `deliver()` returns
+false rather than claiming a delivery the OS never made. Only running it on an emulator found this,
+which is the same lesson as the mutation testing: verification has to actually execute the thing.
 
 **Invisible characters, twice.** Agents emitted regexes and literals containing *raw* control bytes
 instead of escapes — including the GS1 separator as a literal `0x1D`. Functionally correct every
