@@ -15,6 +15,8 @@ export default function RootLayout() {
             <Stack.Screen name="index" options={{ title: 'Receipts' }} />
             <Stack.Screen name="capture" options={{ title: 'New receipt', presentation: 'modal' }} />
             <Stack.Screen name="receipt/[localId]" options={{ title: 'Receipt' }} />
+            <Stack.Screen name="scan" options={{ title: 'Scan code', presentation: 'modal' }} />
+            <Stack.Screen name="crop" options={{ title: 'Crop receipt', presentation: 'modal' }} />
             <Stack.Screen name="settings" options={{ title: 'Session & simulation' }} />
           </Stack>
           <StatusBar style="auto" />

@@ -3,13 +3,31 @@ import { useCallback, useMemo, useState } from 'react';
 import { Alert, Image, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { isAmbiguous, rankAndExplain, type ConfidenceBand } from '@/domain/confidence';
 import { formatDateOnlyHuman } from '@/domain/dates';
 import { findMatchCandidates } from '@/domain/matching';
 import { formatMinorUnits } from '@/domain/money';
 import { useApp } from '@/ui/app-context';
 import { Badge, Banner, Button, Card, Muted, Row, SectionTitle, Title } from '@/ui/components';
-import { describeCompanyBlock, describeStatus } from '@/ui/receipt-status';
+import { describeCompanyBlock, describeStatus, type Tone } from '@/ui/receipt-status';
 import { usePalette } from '@/ui/theme';
+
+/** Confidence bands map onto the same tone vocabulary the status badges use. */
+const BAND_TONE: Record<ConfidenceBand, Tone> = {
+  exact: 'success',
+  high: 'success',
+  medium: 'pending',
+  low: 'warning',
+  none: 'neutral',
+};
+
+const BAND_LABEL: Record<ConfidenceBand, string> = {
+  exact: 'Exact match',
+  high: 'Likely match',
+  medium: 'Possible match',
+  low: 'Weak match',
+  none: 'Not comparable',
+};
 
 export default function ReceiptDetailScreen() {
   const { localId } = useLocalSearchParams<{ localId: string }>();
@@ -20,8 +38,12 @@ export default function ReceiptDetailScreen() {
 
   const draft = drafts.find((d) => d.localId === localId);
 
-  const candidates = useMemo(
-    () => (draft ? findMatchCandidates(draft, transactions, { limit: 5 }) : []),
+  const ranked = useMemo(
+    () => (draft ? rankAndExplain(draft, findMatchCandidates(draft, transactions, { limit: 5 })) : []),
+    [draft, transactions],
+  );
+  const ambiguous = useMemo(
+    () => (draft ? isAmbiguous(findMatchCandidates(draft, transactions, { limit: 5 })) : false),
     [draft, transactions],
   );
 
@@ -38,7 +60,6 @@ export default function ReceiptDetailScreen() {
       if (outcome?.kind === 'failed') {
         Alert.alert('Not accepted', outcome.draft.lastError ?? 'The server rejected this receipt.');
       } else if (outcome?.kind === 'advanced' && outcome.deduped) {
-        // Worth saying out loud: this is the lost-response case resolving safely.
         Alert.alert(
           'Already on the server',
           'The server had already recorded this receipt from an earlier attempt, so nothing was duplicated.',
@@ -69,6 +90,7 @@ export default function ReceiptDetailScreen() {
   const status = describeStatus(draft);
   const blocked = describeCompanyBlock(draft, session?.companyId ?? null, companyName);
   const busy = working || syncing;
+  const editable = draft.serverReceiptId === null;
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: p.bg }} edges={['bottom']}>
@@ -78,7 +100,9 @@ export default function ReceiptDetailScreen() {
             source={{ uri: draft.fileUri }}
             style={{ width: '100%', height: 220, borderRadius: 12, backgroundColor: p.surfaceAlt }}
             resizeMode="contain"
-            accessibilityLabel="Receipt image"
+            accessible
+            accessibilityRole="image"
+            accessibilityLabel={`Receipt image for ${draft.vendor ?? 'this receipt'}`}
           />
         ) : null}
 
@@ -97,70 +121,140 @@ export default function ReceiptDetailScreen() {
               <Muted>{draft.notes}</Muted>
             </>
           ) : null}
+
+          {editable ? (
+            <View style={{ marginTop: 12 }}>
+              <Button
+                title="Scan barcode or QR"
+                variant="secondary"
+                onPress={() => router.push(`/scan?localId=${draft.localId}`)}
+              />
+            </View>
+          ) : null}
         </Card>
 
+        {/*
+          The status pair is grouped for assistive tech. Read separately, "Queued"
+          and "Not received" are two disconnected words; the group reads as one
+          sentence that actually conveys the local/remote distinction the whole
+          app is built around.
+        */}
         <Card>
           <SectionTitle>Status</SectionTitle>
-          <Row gap={12} style={{ alignItems: 'flex-start' }}>
-            <Badge caption="On this device" label={status.deviceLabel} tone={status.deviceTone} />
-            <Badge caption="On the server" label={status.serverLabel} tone={status.serverTone} />
-          </Row>
-          <View style={{ height: 10 }} />
-          <Muted>{status.explanation}</Muted>
+          <View
+            accessible
+            accessibilityRole="summary"
+            accessibilityLabel={`On this device: ${status.deviceLabel}. On the server: ${status.serverLabel}. ${status.explanation}`}
+          >
+            <Row gap={12} style={{ alignItems: 'flex-start' }}>
+              <Badge caption="On this device" label={status.deviceLabel} tone={status.deviceTone} />
+              <Badge caption="On the server" label={status.serverLabel} tone={status.serverTone} />
+            </Row>
+            <View style={{ height: 10 }} />
+            <Muted>{status.explanation}</Muted>
+          </View>
 
-          <View style={{ height: 10 }} />
-          <Text style={{ color: p.textMuted, fontSize: 12, fontFamily: 'monospace' }}>
-            server id: {draft.serverReceiptId ?? '—'}
-          </Text>
-          <Text style={{ color: p.textMuted, fontSize: 12, fontFamily: 'monospace' }}>
-            idempotency: {draft.idempotencyKey.slice(0, 18)}…
-          </Text>
-          <Text style={{ color: p.textMuted, fontSize: 12, fontFamily: 'monospace' }}>
-            attempts: {draft.attemptCount} · company: {companyName(draft.companyId)}
-          </Text>
+          <View style={{ height: 10 }} accessible={false} />
+          <View accessible accessibilityLabel={`Technical details. Server id ${draft.serverReceiptId ?? 'none'}. Attempt ${draft.attemptCount}. Company ${companyName(draft.companyId)}.`}>
+            <Text style={{ color: p.textMuted, fontSize: 12, fontFamily: 'monospace' }}>
+              server id: {draft.serverReceiptId ?? '—'}
+            </Text>
+            <Text style={{ color: p.textMuted, fontSize: 12, fontFamily: 'monospace' }}>
+              idempotency: {draft.idempotencyKey.slice(0, 18)}…
+            </Text>
+            <Text style={{ color: p.textMuted, fontSize: 12, fontFamily: 'monospace' }}>
+              attempts: {draft.attemptCount} · company: {companyName(draft.companyId)}
+            </Text>
+          </View>
         </Card>
 
         {blocked ? <Banner tone="warning">{blocked}</Banner> : null}
 
-        {draft.serverReceiptId === null ? (
+        {editable ? (
           <Card>
             <SectionTitle>Match to a transaction</SectionTitle>
             <Muted>
-              Matching is sent with the submission. The server is the one that saves it, and it will
-              refuse a transaction that already belongs to another receipt.
+              Matching is sent with the submission. The server saves it, and will refuse a transaction
+              that already belongs to another receipt.
             </Muted>
+
+            {ambiguous ? (
+              <View style={{ marginTop: 10 }}>
+                <Banner tone="pending">
+                  Two transactions look equally likely. Nothing has been pre-selected — pick the right
+                  one yourself.
+                </Banner>
+              </View>
+            ) : null}
+
             <View style={{ height: 10 }} />
-            {candidates.length === 0 ? (
+            {ranked.length === 0 ? (
               <Muted>No comparable transactions for this company.</Muted>
             ) : (
-              candidates.map((c) => {
+              ranked.map((c) => {
                 const selected = draft.pendingMatchTransactionId === c.transaction.id;
+                const v = c.verdict;
+                const amount = `${c.transaction.currency} ${formatMinorUnits(c.transaction.amountMinorUnits, c.transaction.currency)}`;
                 return (
                   <View
                     key={c.transaction.id}
+                    accessible
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected, disabled: c.blocked || busy }}
+                    accessibilityLabel={`${c.transaction.merchant}, ${amount}, ${c.transaction.occurredAt.slice(0, 10)}. ${BAND_LABEL[v.band]}. ${v.summary}`}
+                    accessibilityHint={c.blocked ? undefined : selected ? 'Double tap to deselect' : 'Double tap to select this transaction'}
                     style={{
-                      borderWidth: 1, borderRadius: 9, padding: 11, marginBottom: 8,
+                      borderWidth: selected ? 2 : 1,
+                      borderRadius: 9,
+                      padding: 11,
+                      marginBottom: 8,
                       borderColor: selected ? p.accent : p.border,
                       backgroundColor: selected ? p.surfaceAlt : 'transparent',
-                      opacity: c.blocked ? 0.55 : 1,
+                      opacity: c.blocked ? 0.6 : 1,
                     }}
                   >
-                    <Row style={{ justifyContent: 'space-between' }}>
+                    <Row style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
                       <Text style={{ color: p.text, fontWeight: '700', fontSize: 14, flex: 1 }}>
                         {c.transaction.merchant}
                       </Text>
-                      <Text style={{ color: p.textMuted, fontSize: 12 }}>{c.score}%</Text>
+                      <Badge label={BAND_LABEL[v.band]} tone={BAND_TONE[v.band]} />
                     </Row>
                     <Muted>
-                      {c.transaction.currency}{' '}
-                      {formatMinorUnits(c.transaction.amountMinorUnits, c.transaction.currency)} ·{' '}
-                      {c.transaction.occurredAt.slice(0, 10)}
+                      {amount} · {c.transaction.occurredAt.slice(0, 10)}
                     </Muted>
-                    {c.isExact ? <Text style={{ color: p.success, fontSize: 12, marginTop: 4 }}>Exact match</Text> : null}
+
+                    <Text style={{ color: p.text, fontSize: 13, lineHeight: 19, marginTop: 8 }}>
+                      {v.summary}
+                    </Text>
+
+                    {v.reasons.length > 0 ? (
+                      <View style={{ marginTop: 6 }}>
+                        {v.reasons.map((r) => (
+                          <Text key={r} style={{ color: p.success, fontSize: 12, lineHeight: 18 }}>
+                            ✓ {r}
+                          </Text>
+                        ))}
+                      </View>
+                    ) : null}
+
+                    {/* The honest other half. A confidence UI that only lists
+                        supporting evidence is a persuasion UI. */}
+                    {v.caveats.length > 0 ? (
+                      <View style={{ marginTop: 4 }}>
+                        {v.caveats.map((r) => (
+                          <Text key={r} style={{ color: p.warning, fontSize: 12, lineHeight: 18 }}>
+                            • {r}
+                          </Text>
+                        ))}
+                      </View>
+                    ) : null}
+
                     {c.blocked ? (
-                      <Text style={{ color: p.warning, fontSize: 12, marginTop: 4 }}>{c.blockedReason}</Text>
+                      <Text style={{ color: p.warning, fontSize: 12, marginTop: 8, fontWeight: '600' }}>
+                        {c.blockedReason}
+                      </Text>
                     ) : (
-                      <View style={{ marginTop: 8 }}>
+                      <View style={{ marginTop: 10 }}>
                         <Button
                           title={selected ? 'Selected' : 'Select'}
                           variant={selected ? 'primary' : 'secondary'}
@@ -173,6 +267,14 @@ export default function ReceiptDetailScreen() {
                         />
                       </View>
                     )}
+
+                    {v.requiresReview && selected ? (
+                      <View style={{ marginTop: 8 }}>
+                        <Muted>
+                          This match is weak enough that it will be flagged for review after you submit.
+                        </Muted>
+                      </View>
+                    ) : null}
                   </View>
                 );
               })
@@ -199,9 +301,7 @@ export default function ReceiptDetailScreen() {
         ) : null}
 
         {draft.state === 'failed' && !draft.lastErrorRetryable ? (
-          <Banner tone="danger">
-            This will not succeed by retrying. {draft.lastError}
-          </Banner>
+          <Banner tone="danger">This will not succeed by retrying. {draft.lastError}</Banner>
         ) : null}
       </ScrollView>
     </SafeAreaView>

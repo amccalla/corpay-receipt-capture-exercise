@@ -94,6 +94,12 @@ testable as pure functions.
 | [`src/domain/ids.ts`](src/domain/ids.ts) | Idempotency keys, submission fingerprints, rotation policy. |
 | [`src/domain/validation.ts`](src/domain/validation.ts) | Untrusted-file checks by magic bytes; the production quarantine boundary. |
 | [`src/domain/matching.ts`](src/domain/matching.ts) | Company-scoped candidate scoring and the one-receipt-per-transaction rule. |
+| [`src/domain/confidence.ts`](src/domain/confidence.ts) | Confidence bands, generated caveats, auto-selection and ambiguity policy. |
+| [`src/domain/barcode.ts`](src/domain/barcode.ts) | GS1-128 and fiscal-QR decoding. Pure; no camera dependency. |
+| [`src/domain/extraction.ts`](src/domain/extraction.ts) | The only door through which an extraction may touch a draft. |
+| [`src/notify/policy.ts`](src/notify/policy.ts) | Whether a transition is worth a notification, and what it may say. |
+| [`src/notify/notifier.ts`](src/notify/notifier.ts) | The thin native shell around that policy. |
+| [`src/ui/image-edit.ts`](src/ui/image-edit.ts) | Crop geometry and the re-encode pipeline. |
 | [`src/data/store.ts`](src/data/store.ts) | The persistence interface — company-scoped *by signature*. |
 | [`src/data/sqlite-store.ts`](src/data/sqlite-store.ts) · [`db.ts`](src/data/db.ts) | SQLite schema, migrations, row mapping. |
 | [`src/data/session.ts`](src/data/session.ts) | Keychain-backed session, company switch, token rules. |
@@ -167,9 +173,20 @@ those — retrying cannot make a file smaller. The user gets an actionable messa
 spinner.
 
 **5. OCR returns after the user corrected the vendor and amount.**
-Every extractable field carries a `FieldOrigin` (`user` / `ocr` / `empty`). The server's OCR pass
-only fills fields the submission left null. A human edit is permanent; a late reading cannot
-overwrite it.
+Every extractable field carries a `FieldOrigin`, ordered `empty < ocr < barcode < user`. A writer
+may only overwrite a field whose current origin ranks strictly lower than its own, so a human edit
+is permanent while a barcode may still upgrade a field OCR guessed at. All automatic writes go
+through one function, [`mergeExtraction`](src/domain/extraction.ts) — there is no path from the
+camera or the server that writes a field directly.
+
+Two rules inside it are worth naming, because both guard the 100x class of error: an amount with no
+currency is refused outright, and a currency change is refused whenever it would *re-denominate* an
+amount the incoming origin cannot overwrite. So a barcode reading "EUR" against a total the user
+typed in dollars is rejected whole, rather than quietly restating their number in another currency.
+
+The form marks a field `user` only if the person actually supplied it. Stamping all four on save —
+the obvious shortcut — would record the currency picker's *default* as a human decision, locking an
+unconsidered `USD` against correction forever.
 
 **6. Two receipts matched to the same transaction.**
 `Transaction.matchedReceiptId` holds at most one receipt. A second claim returns
@@ -181,15 +198,34 @@ retry is never punished.
 
 ## Scope
 
-**Implemented** — capture via camera or library; metadata entry with real validation; durable
+**Core (Phase 1)** — capture via camera or library; metadata entry with real validation; durable
 drafts; offline queue; the full state machine; idempotent retry; company boundary end to end;
 seeded matching with conflict handling; secure session with switch/logout cleanup; deterministic
 fake OCR feeding a NeedsReview path; failure injection for every modelled failure.
 
-**Deliberately not implemented** (the brief's extension menu, and Phase 2 of this exercise):
-resumable/chunked upload; true OS background transfer; image compression and cropping; barcode
-extraction; match-confidence UX; push completion; a web review console; conflict handling across
-two devices; Detox/E2E; telemetry and crash reporting; pre-signed upload URLs.
+**Creative directions (Phase 2)** — four of the brief's six, chosen because they compose into one
+story rather than four unrelated features: a barcode payload produces values → those values must
+respect the provenance rules → which feed a confidence decision → which is what a notification
+announces. The brief says plainly that *"more extensions do not produce a higher score by
+themselves"*, so the two that did not fit that thread were left out.
+
+- **Barcode / QR extraction** — real GS1-128 Application Identifiers and base64/TLV fiscal-invoice
+  QR, not a fake. Both formats are public and fully deterministic, which satisfies the brief's
+  preference for "a deterministic fake … over a fragile external demo" while being genuinely
+  correct rather than theatre.
+- **Receipt cropping and compression** — normalised crop rectangle, 1600px longest edge, always
+  re-encoded to JPEG so an unsupported HEIC never reaches the server at all.
+- **Match confidence** — bands, generated caveats, an auto-selection threshold, and an ambiguity
+  guard that refuses to pre-select anything when two candidates are too close to call.
+- **Push completion** — a local notification when the *server* confirms, with the amount
+  deliberately withheld from the body.
+- **Accessibility** — the local/remote status pair is grouped so it reads as one sentence rather
+  than two disconnected words; choices announce their selected state; crop handles are
+  `adjustable` so they work without a drag gesture.
+
+**Deliberately not implemented:** a web review console; resumable/chunked upload; true OS
+background transfer; conflict handling across two devices; Detox/E2E; telemetry and crash
+reporting; pre-signed upload URLs.
 
 **What I would do next, in order:** (1) real background upload, because it is the one gap that
 changes the state machine rather than decorating it — a transfer that outlives the process needs a
@@ -311,6 +347,14 @@ device.
   injection in integration tests, not a settings screen.
 - OCR is a hash of the storage key. Same image, same result, every time — which is the property that
   makes the NeedsReview path demonstrable.
+- **Push completion is a LOCAL notification, not remote push.** Remote push needs a push service, a
+  device-token registry, and a server that can reach it — none of which an in-process fake can
+  honestly provide. What this does demonstrate is the real client-side behaviour: permission timing,
+  deep-link validation, collapse keys, and lock-screen privacy. What it does *not* demonstrate is the
+  case that actually matters in production — a completion arriving while the app is dead, which is
+  exactly what makes a reconciliation-on-launch pass mandatory rather than optional.
+- Barcode *decoding* is real and tested; barcode *scanning* depends on the device camera and is only
+  exercised on a simulator or handset.
 
 ### The testing split
 
@@ -335,6 +379,19 @@ first thing I would cover.
 The test suites were additionally **mutation-audited**: invariants were deliberately broken in the
 implementation to confirm the tests actually fail. A test that passes against a broken
 implementation is worse than no test, because it manufactures confidence.
+
+That practice earned its keep twice. In Phase 1 a 645-test green suite survived six sabotages of the
+state machine — all of them *field-blanking*, because the tests only asserted what a transition
+changes and never what it must preserve. In Phase 2 the five highest-value invariants were each
+broken deliberately and every one was caught:
+
+| Sabotage | Tests that failed |
+| --- | --- |
+| Provenance precedence disabled | 23 |
+| Blocked candidates made auto-selectable | 2 |
+| Ambiguity guard disabled | 4 |
+| GS1 GTIN treated as variable-length | 15 |
+| Amount leaked into a notification body | 6 |
 
 ### How AI and tooling handled — or missed — native and failure-path complexity
 
@@ -368,7 +425,7 @@ npm run typecheck
 npm run lint
 ```
 
-716 tests across 12 suites. The split is deliberate — see
+1033 tests across 19 suites. The split is deliberate — see
 [The testing split](#the-testing-split) above.
 
 | Suite | Covers |
@@ -384,6 +441,13 @@ npm run lint
 | `data/__tests__/persistence` | Tenancy in the store; token rules in the session |
 | `server/__tests__/*` | Idempotency, company mismatch, OCR determinism |
 | `sync/__tests__/sync-engine` | All six edge cases, end to end |
+| `domain/__tests__/barcode` | GS1 fixed/variable AIs, hostile TLV, decimal-vs-exponent conflict |
+| `domain/__tests__/confidence` | Band boundaries, ambiguity guard, generated caveats |
+| `domain/__tests__/extraction` | The full 4x4 provenance grid, and the re-denomination rules |
+| `domain/__tests__/user-provenance` | That only what a person typed is marked as theirs |
+| `notify/__tests__/policy` | Triggers, and that no body ever leaks an amount |
+| `notify/__tests__/notifier` | Deep-link validation against open-redirect payloads |
+| `ui/__tests__/image-edit` | Crop geometry, including degenerate and out-of-bounds rects |
 
 ---
 
@@ -438,6 +502,9 @@ build materially, including in ways that were wrong.
 | Build the deterministic fake server | Agent | `fake-server.ts`, `ocr.ts`, `seed.ts` | **Mine, and wrong:** that it would expose `seedTransaction`, `listTransactionsUnchecked`, `expireTokensForCompany` | `tsc` failed on all three | Rewrote the app context against the real API — which was better, because it forced transactions through the *authenticated* endpoint |
 | Determine the `expo-file-system` API | `tsc` as an oracle | `File` / `Paths` / `Directory` | That recalled API shape was current — it was not | Wrote a throwaway probe file and let the compiler enumerate the members | Rewrote the intake layer; `bytes()` is async, which the compiler caught |
 | Write behavioural tests for the invariants | Workflow, 3 agents + 3 mutation auditors | `state-machine`, `persistence`, `sync-engine` suites | That a green suite means a covered invariant | Mutation testing: deliberately broke the implementation and re-ran | Added a whole preservation suite after the audit showed 6 of 18 sabotages went undetected |
+| Build the Phase 2 modules against an extended contract | Workflow, 4 agents | barcode, confidence, extraction, notification policy | That agents conform to specified signatures, as in Phase 1 | `tsc`, 273 new tests, then my own mutation pass | Fixed raw control bytes in six files; adopted all four modules unchanged otherwise |
+| Mutation-audit the Phase 2 modules | (planned: 4 agents; **all four failed on a usage limit**) | Nothing — the phase produced no output | — | I ran the five highest-value mutations by hand instead | Nothing skipped; the audit happened, just not the way it was scheduled |
+| Decide barcode strategy | My call, not the agent's | Real GS1-128 + fiscal-QR parsing | That implementing public formats beats inventing a fake | Both are fully specified and deterministic, so they are testable to the same standard | Rejected the "deterministic fake decoder" reading of the brief as the weaker option |
 
 ## Failures and corrections
 
@@ -483,6 +550,29 @@ build materially, including in ways that were wrong.
   was caught by 46 passing tests written specifically for that file; both were found by an auditor
   sabotaging the code to see whether anything screamed. The fix injects a clock and validates
   `expiresAt` as strictly as the token, with tests that I verified fail when the guard is removed.
+- **The same defect class recurred, which makes it a tendency rather than an incident.** In both
+  phases, agents emitted regexes and string literals containing *raw* control characters instead of
+  escape sequences — `\x00`, `\x1F`, `\x7F`, and in the barcode parser the GS1 separator itself as a
+  literal `0x1D`. The code is functionally correct every time, which is exactly why it survives
+  review: the characters are invisible. What it costs is real, though — the files become binary to
+  git, grep and diff, so `grep -n "^export"` silently returns nothing and a code review shows
+  "Binary files differ". Ten files were affected across the two phases. I now scan for it explicitly
+  rather than trusting that a green suite means a clean file.
+- **A bug I introduced in a screen, caught by lint rather than by me.** The crop screen built its
+  PanResponders inside a `useMemo` that read `rectRef.current` during render. `react-hooks/refs`
+  flagged it, correctly: reading a ref while rendering can silently miss an update. Restructured onto
+  React Native's own responder props so every ref access happens inside an event handler, and lifted
+  the gesture arithmetic into a pure, tested function while I was there.
+- **A provenance bug that would have quietly defeated edge case 5 from the other direction.** The
+  capture form stamped all four fields as `user` on every save. Marking fields the person *did* fill
+  is right; marking the currency picker's untouched default is not — it records `USD` as a human
+  decision and locks it against any later correction. Fixed by tracking whether the picker was
+  actually used, and pinned with tests that prove an extraction can still fill a blank the user left
+  while still being refused when it would re-denominate a number they typed.
+- **My own test caught my own bug.** In the crop geometry, clamping only the far edge was not
+  enough: an origin landing exactly on the boundary leaves zero room, and the one-pixel minimum then
+  pushed the rectangle back out of bounds — the precise out-of-range crop the function exists to
+  prevent. Found by the degenerate-rect cases, not by reading the code.
 - **How the harness/tests exposed problems.** Mutation testing was worth more than every other
   check combined. A 645-test green suite survived six deliberate sabotages of the state machine —
   all of them *field-blanking*, because the tests only ever asserted what a transition changes,
@@ -517,10 +607,18 @@ build materially, including in ways that were wrong.
   contract was frozen first. The adversarial review was the other real win: the four money and
   storage-key defects were in code I would probably have accepted on reading, because it was
   well-structured, well-commented, and had passing tests.
-- **Where AI increased review or cleanup cost.** Three places. Native API surfaces, where recalled
-  shapes were confidently wrong and the compiler was the only reliable oracle. Cross-module
-  assumptions, where my own invented interface cost a rewrite. And *plausible-but-hollow tests* —
-  the most expensive category, because a hollow test is worse than a missing one: it looks like
-  coverage. Verifying the tests cost more than writing them, and was the single highest-value thing
-  I did.
+- **Where AI increased review or cleanup cost.** Four places. Native API surfaces, where recalled
+  shapes were confidently wrong and the compiler was the only reliable oracle — `expo-file-system`
+  moved to a `File`/`Paths` API and `bytes()` became async; `accessibilityRole="status"` does not
+  exist in React Native. Cross-module assumptions, where my own invented interface cost a rewrite.
+  Invisible-character emission, which recurred across two independent workflows. And
+  *plausible-but-hollow tests* — the most expensive category, because a hollow test is worse than a
+  missing one: it looks like coverage. Verifying the tests cost more than writing them, and was the
+  single highest-value thing I did.
+- **What I would tell someone running agents on work like this.** Freeze the contract by hand before
+  any fan-out, because interface drift is the dominant failure mode and it is *your* invented
+  interface that will drift, not theirs. Then budget as much time for adversarially verifying the
+  output as for producing it. Every defect that mattered here — the 100x currency bug, the immortal
+  session, the six field-blanking sabotages — was found by something actively trying to break the
+  code, never by reading it. Reading it is how they survived review in the first place.
 

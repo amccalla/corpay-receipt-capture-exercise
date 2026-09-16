@@ -63,6 +63,7 @@ export default function SettingsScreen() {
             <View style={{ flex: 1 }}>
               <Button
                 title="Online"
+                selected={networkMode === 'online'}
                 variant={networkMode === 'online' ? 'primary' : 'secondary'}
                 onPress={() => actions.setNetworkMode('online')}
               />
@@ -70,6 +71,7 @@ export default function SettingsScreen() {
             <View style={{ flex: 1 }}>
               <Button
                 title="Offline"
+                selected={networkMode === 'offline'}
                 variant={networkMode === 'offline' ? 'primary' : 'secondary'}
                 onPress={() => actions.setNetworkMode('offline')}
               />
@@ -98,6 +100,7 @@ export default function SettingsScreen() {
               <Button
                 key={c.id}
                 title={c.id === session?.companyId ? `${c.name} (current)` : `Switch to ${c.name}`}
+                selected={c.id === session?.companyId}
                 variant={c.id === session?.companyId ? 'primary' : 'secondary'}
                 onPress={() => void actions.switchCompany(c.id)}
               />
@@ -107,12 +110,17 @@ export default function SettingsScreen() {
 
         <Card>
           <SectionTitle>Session</SectionTitle>
-          <Text style={{ color: p.textMuted, fontSize: 12, fontFamily: 'monospace' }}>
-            user: {session?.userId ?? '—'}
-          </Text>
-          <Text style={{ color: p.textMuted, fontSize: 12, fontFamily: 'monospace' }}>
-            expires: {session?.expiresAt?.slice(11, 19) ?? '—'}
-          </Text>
+          <View
+            accessible
+            accessibilityLabel={`Signed in as ${session?.userId ?? 'nobody'}. Session expires at ${session?.expiresAt?.slice(11, 19) ?? 'unknown'}.`}
+          >
+            <Text style={{ color: p.textMuted, fontSize: 12, fontFamily: 'monospace' }}>
+              user: {session?.userId ?? '—'}
+            </Text>
+            <Text style={{ color: p.textMuted, fontSize: 12, fontFamily: 'monospace' }}>
+              expires: {session?.expiresAt?.slice(11, 19) ?? '—'}
+            </Text>
+          </View>
           <View style={{ height: 6 }} />
           <Muted>
             The token lives in the device keychain, never in the database or ordinary app storage.
@@ -131,6 +139,12 @@ export default function SettingsScreen() {
               <View key={f.key}>
                 <Button
                   title={f.label}
+                  selected={failureInjection === f.key}
+                  // The blurb is only rendered for the selected option, so it
+                  // is folded into the label here - otherwise a screen reader
+                  // user choosing between seven failures hears seven bare names
+                  // and no explanation of any of them.
+                  accessibilityLabel={`${f.label}. ${f.blurb}`}
                   variant={failureInjection === f.key ? 'primary' : 'secondary'}
                   onPress={() => actions.setFailureInjection(f.key)}
                 />

@@ -19,12 +19,18 @@ import { SQLiteReceiptStore } from '../data/sqlite-store';
 import { InMemoryReceiptStore, type ReceiptStore } from '../data/store';
 import { FakeServer, type FailureInjection, type NetworkMode } from '../server/fake-server';
 import { COMPANIES, USERS } from '../server/seed';
+import { configureNotifications, notifyOnChange, requestNotificationPermission } from '../notify/notifier';
 import { SyncEngine, type SyncOutcome, type SyncReport } from '../sync/sync-engine';
 
 /** Real wall clock. The engine and server take this as a dependency so tests can replace it. */
 const nowIso = (): Instant => new Date().toISOString();
 
 const SESSION_TTL_MS = 15 * 60 * 1000;
+
+/** Notification copy names the company, since a user here has more than one. */
+function companyNameFor(id: string): string {
+  return COMPANIES.find((c) => c.id === id)?.name ?? id;
+}
 
 export interface AppState {
   ready: boolean;
@@ -116,6 +122,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       session.subscribe(setSession);
       await session.restore();
+
+      // Presentation rules only; no permission is requested here. See notifier.ts
+      // for why the prompt is deferred until the user has queued something.
+      await configureNotifications();
 
       setEphemeralStorage(ephemeral);
       setReady(true);
@@ -284,6 +294,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (networkMode === 'offline') {
       const queued = applyLocalEvent(draft, 'submitOffline', nowIso());
       await store.update(companyId, queued);
+      // Asked here, not at launch: the user has just parked something they will
+      // want to hear about. A denial on iOS is effectively permanent, so the
+      // single prompt is spent where it can be understood.
+      void requestNotificationPermission();
       await refresh();
       return { kind: 'skipped', localId, reason: 'NO_SESSION' };
     }
@@ -295,6 +309,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setSyncing(true);
     try {
       const outcome = await engine.syncOne(companyId, localId);
+      // The policy decides whether this transition is worth a notification;
+      // this layer only supplies the before and after.
+      if (outcome.kind === 'advanced' || outcome.kind === 'failed') {
+        await notifyOnChange(draft, outcome.draft, companyNameFor(companyId));
+      }
       await refresh();
       return outcome;
     } finally {
@@ -304,10 +323,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const syncNow = useCallback(async (): Promise<SyncReport | null> => {
     const engine = engineRef.current;
-    if (!engine || !companyId) return null;
+    const store = storeRef.current;
+    if (!engine || !store || !companyId) return null;
     setSyncing(true);
     try {
+      // Snapshot first: planNotification needs the prior state of each draft to
+      // tell a genuine transition from a no-op.
+      const before = new Map((await store.list(companyId)).map((d) => [d.localId, d]));
       const report = await engine.syncAll(companyId);
+
+      for (const outcome of report.outcomes) {
+        if (outcome.kind !== 'advanced' && outcome.kind !== 'failed') continue;
+        const prev = before.get(outcome.draft.localId);
+        if (prev) await notifyOnChange(prev, outcome.draft, companyNameFor(companyId));
+      }
+
       await refresh();
       return report;
     } finally {

@@ -108,7 +108,30 @@ export function isServerState(s: ReceiptState): s is ServerState {
  * and amount." A human edit must win permanently, so every extractable field
  * carries its origin. Merge logic refuses to let 'ocr' overwrite 'user'.
  */
-export type FieldOrigin = 'user' | 'ocr' | 'empty';
+export type FieldOrigin = 'user' | 'barcode' | 'ocr' | 'empty';
+
+/**
+ * Precedence, highest wins. A writer may only overwrite a field whose current
+ * origin ranks strictly LOWER than its own.
+ *
+ * `barcode` outranks `ocr` because a barcode or fiscal QR payload is structured
+ * machine-readable data with a check digit, whereas OCR is a guess about
+ * smudged thermal paper. `user` outranks everything, permanently: a person who
+ * looked at the physical receipt is the highest authority we have, and the
+ * brief's edge case 5 turns on a late extraction never being allowed to
+ * overwrite them.
+ */
+export const ORIGIN_PRECEDENCE: Readonly<Record<FieldOrigin, number>> = {
+  empty: 0,
+  ocr: 1,
+  barcode: 2,
+  user: 3,
+};
+
+/** True when `incoming` is allowed to overwrite a field currently owned by `current`. */
+export function originMayOverwrite(current: FieldOrigin, incoming: FieldOrigin): boolean {
+  return ORIGIN_PRECEDENCE[incoming] > ORIGIN_PRECEDENCE[current];
+}
 
 export interface FieldProvenance {
   readonly vendor: FieldOrigin;

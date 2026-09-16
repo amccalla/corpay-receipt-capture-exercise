@@ -18,7 +18,7 @@ function ReceiptRow({ draft, onPress }: { draft: ReceiptDraft; onPress: () => vo
   return (
     <Card style={{ marginBottom: 10 }}>
       <Row style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
-        <View style={{ flex: 1 }}>
+        <View style={{ flex: 1 }} accessible accessibilityRole="header">
           <Title>{draft.vendor ?? 'Untitled receipt'}</Title>
           <Muted>
             {draft.amountMinorUnits !== null && draft.currency
@@ -34,17 +34,28 @@ function ReceiptRow({ draft, onPress }: { draft: ReceiptDraft; onPress: () => vo
         visibly different" made literal: the user always sees both, and the
         right-hand column says "Not received" until the server proves otherwise.
       */}
-      <Row style={{ marginTop: 12, alignItems: 'flex-start' }} gap={12}>
-        <Badge caption="On this device" label={status.deviceLabel} tone={status.deviceTone} />
-        <Badge caption="On the server" label={status.serverLabel} tone={status.serverTone} />
-      </Row>
+      <View
+        accessible
+        accessibilityRole="summary"
+        accessibilityLabel={`On this device: ${status.deviceLabel}. On the server: ${status.serverLabel}. ${status.explanation}`}
+      >
+        <Row style={{ marginTop: 12, alignItems: 'flex-start' }} gap={12}>
+          <Badge caption="On this device" label={status.deviceLabel} tone={status.deviceTone} />
+          <Badge caption="On the server" label={status.serverLabel} tone={status.serverTone} />
+        </Row>
 
-      <Text style={{ color: p.textMuted, fontSize: 12, lineHeight: 18, marginTop: 10 }}>
-        {status.explanation}
-      </Text>
+        <Text style={{ color: p.textMuted, fontSize: 12, lineHeight: 18, marginTop: 10 }}>
+          {status.explanation}
+        </Text>
+      </View>
 
       <View style={{ marginTop: 12 }}>
-        <Button title="Open" variant="secondary" onPress={onPress} />
+        <Button
+          title="Open"
+          variant="secondary"
+          onPress={onPress}
+          accessibilityLabel={`Open receipt from ${draft.vendor ?? 'unnamed vendor'}`}
+        />
       </View>
     </Card>
   );

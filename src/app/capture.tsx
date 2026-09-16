@@ -4,6 +4,7 @@ import { ActivityIndicator, Alert, Image, ScrollView, Text, TextInput, View } fr
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { isValidDateOnly } from '@/domain/dates';
+import { provenanceForUserEntry } from '@/domain/extraction';
 import { parseAmountToMinorUnits } from '@/domain/money';
 import type { ReceiptDraft } from '@/domain/types';
 import { useApp } from '@/ui/app-context';
@@ -22,6 +23,10 @@ export default function CaptureScreen() {
   const [vendor, setVendor] = useState('');
   const [amountText, setAmountText] = useState('');
   const [currency, setCurrency] = useState('USD');
+  // Accepting the default is not the same event as choosing a currency, and
+  // recording them identically would lock an unconsidered 'USD' in as a human
+  // decision that no later barcode or OCR pass could correct.
+  const [currencyChosen, setCurrencyChosen] = useState(false);
   const [dateText, setDateText] = useState('');
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
@@ -104,9 +109,14 @@ export default function CaptureScreen() {
           currency,
           transactionDate: dateText.trim(),
           notes: notes.trim() || null,
-          // The user typed these, so mark them as such. A later OCR pass is
-          // then forbidden from overwriting them.
-          provenance: { vendor: 'user', amount: 'user', currency: 'user', transactionDate: 'user' },
+          // Marks ONLY the fields the person actually supplied. See
+          // provenanceForUserEntry for why a blanket 'user' stamp is wrong.
+          provenance: provenanceForUserEntry({
+            vendor: vendor.trim(),
+            amountMinorUnits: amountParse.minorUnits,
+            currencyChosen,
+            transactionDate: dateText.trim(),
+          }),
         });
 
         if (submit) {
@@ -120,7 +130,7 @@ export default function CaptureScreen() {
         setBusy(false);
       }
     },
-    [draft, amountParse, vendor, currency, dateText, notes, actions, router],
+    [draft, amountParse, vendor, currency, currencyChosen, dateText, notes, actions, router],
   );
 
   return (
@@ -161,6 +171,27 @@ export default function CaptureScreen() {
               <Button title="Choose file" variant="secondary" disabled={busy} onPress={() => void pick('library')} />
             </View>
           </Row>
+
+          {draft?.fileUri ? (
+            <Row gap={10} style={{ marginTop: 10 }}>
+              <View style={{ flex: 1 }}>
+                <Button
+                  title="Crop"
+                  variant="secondary"
+                  disabled={busy}
+                  onPress={() => router.push(`/crop?localId=${draft.localId}`)}
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Button
+                  title="Scan code"
+                  variant="secondary"
+                  disabled={busy}
+                  onPress={() => router.push(`/scan?localId=${draft.localId}`)}
+                />
+              </View>
+            </Row>
+          ) : null}
         </Card>
 
         <Card>
@@ -186,7 +217,10 @@ export default function CaptureScreen() {
                 {CURRENCIES.map((c) => (
                   <Text
                     key={c}
-                    onPress={() => setCurrency(c)}
+                    onPress={() => {
+                      setCurrency(c);
+                      setCurrencyChosen(true);
+                    }}
                     style={{
                       paddingVertical: 6, paddingHorizontal: 9, borderRadius: 6, overflow: 'hidden',
                       backgroundColor: c === currency ? p.accent : p.surfaceAlt,

@@ -50,6 +50,19 @@
           "photosPermission": "Used to choose an existing photo of a receipt to attach to an expense.",
           "cameraPermission": "Used to photograph receipts so they can be attached to an expense."
         }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Used to scan a barcode or QR code on a receipt, and to photograph receipts.",
+          "recordAudioAndroid": false
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#0A62C2"
+        }
       ]
     ],
     "experiments": {
