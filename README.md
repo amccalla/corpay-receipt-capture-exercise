@@ -23,7 +23,9 @@ The guide asks for this explicitly, so it is the first thing here rather than a 
 | --- | --- |
 | **Primary review target** | iOS Simulator — **iPhone 15 Pro, iOS 17.0**, via Expo Go (SDK 57) |
 | **Host** | macOS 26.6 (Darwin 25.6), Xcode 27.0, Node 22.23.1, npm 10.9.8 |
-| **Verified** | App launches and renders; Metro bundles 1696 modules with no runtime errors; 1041 automated tests; `tsc --noEmit` clean under `strict`; ESLint clean |
+| **Verified on the simulator** | App launches and renders; sign-in screen shows the seeded users and companies; deep-link routing works; Metro bundles 1696 modules; **no runtime errors** |
+| **Verified by test, not by hand** | The five demo steps below. This host's Xcode is missing `Developer/Applications/Simulator.app`, so the simulator's input port would not accept taps — see *A note on interactive verification* |
+| **Verified** | 1041 automated tests; `tsc --noEmit` clean under `strict`; ESLint clean |
 | **Not verified on device** | Android (bundles, never launched on an emulator); a physical handset of either platform |
 | **Simulated, not real** | The backend. There is no network call anywhere in `src/` — the "server" is an in-process object |
 | **Untested in Expo Go** | Notification *delivery*. Expo Go warns `expo-notifications` is not fully supported since SDK 53. The policy and route validation are unit-tested; actual delivery needs a development build (see below) |
@@ -111,6 +113,29 @@ Each step demonstrates one thing the brief asks for. Steps 2-5 are the ones wort
 
 Steps 1-4 need no camera. Step 5 works in the simulator if you drag a QR image into it, and is the
 only step that benefits from a real device.
+
+#### A note on interactive verification
+
+I ran the app on the simulator and confirmed it launches, renders and routes correctly — but I could
+not *drive* these five steps by hand. The Xcode install on my machine is missing
+`Contents/Developer/Applications/Simulator.app` entirely, so the simulator's HID input port refuses
+connections and taps cannot be injected. `simctl` still works, which is why launching and
+screenshotting do.
+
+Rather than claim more than I checked, here is exactly what backs each step. Every sequence below is
+exercised end to end against the real sync engine, store, session and server — with an injected
+clock, not mocks:
+
+| Demo step | Covered by |
+| --- | --- |
+| 1 — server-side authorization | `server/__tests__/membership` — *refuses a token when Kim asks for a company they do not belong to* |
+| 2 — local vs remote state | `sync/__tests__/sync-engine` — *a queued receipt that never reached a server is not confirmed*; *a full offline syncAll produces no confirmed draft and no server record* |
+| 3 — retry cannot duplicate | *retrying dedupes onto the original record and creates EXACTLY ONE receipt*; *does not create a duplicate MATCH either*; *reuses the SAME idempotency key across the retry* |
+| 4 — company boundary | *never uploads company A's queued receipt during a sync of company B*; *SKIPS a direct syncOne for company A while the session is on company B*; *uploads it under its OWN company once the user switches back* |
+| 5 — extraction never overwrites a human | `domain/__tests__/extraction` (the 4x4 precedence grid) and `domain/__tests__/user-provenance` |
+
+If you are reviewing this on a machine with a working Simulator, the five steps above should be
+followable exactly as written.
 
 ---
 
