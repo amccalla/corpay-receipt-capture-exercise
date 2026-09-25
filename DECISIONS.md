@@ -83,6 +83,70 @@ not *good*.
    belongs in a layer owning both signals.
 5. **Purge receipt images on sign-out**, and revisit certificate pinning and a jailbreak/root posture.
 
+## Adding real extraction: the options
+
+The brief did not require a real OCR provider, and the deterministic fake is what makes every
+failure path triggerable on demand. If it were to become real, the important thing is that **this is
+two problems, not one**, and most of the difficulty is in the second.
+
+**1. Text recognition** — pixels to lines of text. Solved, on-device, free, fast.
+**2. Receipt understanding** — turning `MARKET BASKET … TOTAL 29.49 … 1/31/26` into a vendor, a
+total and a date. This is the hard half: every chain formats differently, totals sit next to
+subtotals and tendered amounts, and dates appear in several formats on the same paper.
+
+### On-device text recognition
+
+All of these use Apple Vision on iOS and Google ML Kit on Android, run offline, cost nothing per
+scan, and keep the image on the device. All of them require a development build — none work in Expo
+Go — and ML Kit pushes the iOS deployment target to 16.0.
+
+| Option | Notes |
+| --- | --- |
+| [`expo-text-extractor`](https://github.com/pchalupa/expo-text-extractor) | Expo module, SDK 52+, config plugin. Closest fit to this project |
+| [`expo-mlkit-ocr`](https://www.npmjs.com/package/expo-mlkit-ocr) | ML Kit Text Recognition v2, both platforms |
+| [`react-native-nitro-ocr`](https://github.com/jonathanpalma/react-native-nitro-ocr/) | Bundles the models rather than fetching them from Play Services, so it still works offline and on devices without GMS — which matters for a brief whose premise is poor connectivity |
+| [`react-native-vision-camera-mlkit`](https://github.com/pedrol2b/react-native-vision-camera-mlkit) and similar frame-processor plugins | Real-time recognition in the viewfinder. Only worth it for live capture; overkill for a still photo |
+
+### Cloud, and receipt-specific services
+
+These solve both problems at once, returning structured fields rather than raw text.
+
+| Option | Notes |
+| --- | --- |
+| AWS Textract `AnalyzeExpense` | Reported around 93% field-level accuracy; expense-shaped output |
+| Google Document AI expense parser | Comparable field accuracy |
+| [Veryfi](https://www.veryfi.com/receipt-ocr-api/), Mindee, Taggun | Receipt-specialised, many fields, line items |
+
+### What I would actually do, and why
+
+**On-device first.** Three reasons, in order of weight for this product:
+
+1. **It matches the premise.** The whole brief is an employee with unreliable connectivity. An
+   extraction step that requires a network call contradicts the scenario it is meant to serve, and
+   would leave the queue holding receipts that cannot even be read until the user is back online.
+2. **Receipts are financial documents.** Shipping them to a third party is a data-processing
+   decision with compliance weight, not a library choice. It needs an answer about retention and
+   sub-processors before it needs an API key.
+3. **Cost and latency.** Per-document pricing on a high-volume expense app adds up, and on-device
+   recognition is effectively instant.
+
+**Then my own parser**, structurally similar to the GS1 decoder already in `src/domain/barcode.ts`:
+pure, deterministic, unit-testable against fixture text. Totals are found by keyword proximity
+rather than position; the vendor is usually the largest text in the top block; dates are matched
+against a small set of formats. Confidence falls out of how many of those agree.
+
+**A cloud fallback only for low confidence** — the small fraction the on-device path cannot read
+well — if the privacy question above has been answered.
+
+### It drops into the existing seam
+
+`extractFromReceipt` is already a pure function behind the same port as everything else, so real
+extraction is a signature change from `(storageKey: string)` to `(bytes: Uint8Array)` and a new
+adapter. Nothing in the state machine, the provenance ladder or the sync engine would move — the
+provenance ladder in particular already answers the question real OCR creates, which is what happens
+when a late reading disagrees with a human. That was the point of building it before the extraction
+was real.
+
 ## What I would leave alone
 
 The domain layer. Money, dates, the state machine and the provenance ladder are small, pure, and

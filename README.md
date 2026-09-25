@@ -145,7 +145,8 @@ only step that benefits from a real device.
   way — but the UI has to be honest about it, so the capture screen labels the values **Simulated
   extraction** and makes you accept them rather than filling the form behind your back. Wiring a
   real provider means replacing one pure function whose signature would become
-  `(bytes) => OcrResult`.
+  `(bytes) => OcrResult`. The options, and why on-device would win for this product, are set out in
+  [DECISIONS.md](DECISIONS.md#adding-real-extraction-the-options).
 
 ---
 
