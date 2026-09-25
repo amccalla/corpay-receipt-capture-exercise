@@ -4,8 +4,10 @@ import { ActivityIndicator, Alert, Image, Pressable, ScrollView, Text, TextInput
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { isValidDateOnly } from '@/domain/dates';
-import { provenanceForUserEntry } from '@/domain/extraction';
-import { parseAmountToMinorUnits } from '@/domain/money';
+import { provenanceForForm } from '@/domain/extraction';
+import { safeStorageKey } from '@/domain/validation';
+import { extractFromReceipt } from '@/server/ocr';
+import { formatMinorUnits, parseAmountToMinorUnits } from '@/domain/money';
 import type { ReceiptDraft } from '@/domain/types';
 import { useApp } from '@/ui/app-context';
 import { Banner, Button, Card, Muted, Row, SectionTitle } from '@/ui/components';
@@ -22,7 +24,7 @@ const SYMBOL_HINTS: Readonly<Record<string, string>> = {
 export default function CaptureScreen() {
   const router = useRouter();
   const p = usePalette();
-  const { actions, networkMode } = useApp();
+  const { actions, networkMode, session } = useApp();
 
   const [draft, setDraft] = useState<ReceiptDraft | null>(null);
   const [vendor, setVendor] = useState('');
@@ -33,6 +35,16 @@ export default function CaptureScreen() {
   // decision that no later barcode or OCR pass could correct.
   const [currencyChosen, setCurrencyChosen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  // Which fields the person edited themselves, and which a read pre-filled.
+  // Kept apart because they mean different things on save - see
+  // provenanceForForm.
+  const [edited, setEdited] = useState<Set<string>>(new Set());
+  const [prefilled, setPrefilled] = useState<Set<string>>(new Set());
+  const [readNote, setReadNote] = useState<string | null>(null);
+
+  const markEdited = useCallback((field: string) => {
+    setEdited((prev) => (prev.has(field) ? prev : new Set(prev).add(field)));
+  }, []);
   const [dateText, setDateText] = useState('');
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
@@ -44,6 +56,53 @@ export default function CaptureScreen() {
     setDraft(created);
     return created;
   }, [draft, actions]);
+
+  /**
+   * Pre-fill from the receipt image.
+   *
+   * Only fills fields the person has not typed into. A pre-filled value is
+   * recorded as 'ocr', not 'user', so a barcode scan or the server's own pass
+   * can still improve on it — and so nothing here can be mistaken later for a
+   * human decision.
+   */
+  const readReceipt = useCallback(
+    (localId: string, mime: string) => {
+      const companyId = session?.companyId;
+      if (!companyId) return;
+
+      const result = extractFromReceipt(safeStorageKey(companyId, localId, mime));
+      const filled: string[] = [];
+      const next = new Set(prefilled);
+
+      if (result.vendor && !edited.has('vendor')) {
+        setVendor(result.vendor);
+        next.add('vendor');
+        filled.push('vendor');
+      }
+      if (result.currency && !edited.has('currency')) {
+        setCurrency(result.currency);
+        next.add('currency');
+      }
+      if (result.amountMinorUnits !== null && result.currency && !edited.has('amount')) {
+        setAmountText(formatMinorUnits(result.amountMinorUnits, result.currency));
+        next.add('amount');
+        filled.push('amount');
+      }
+      if (result.transactionDate && !edited.has('transactionDate')) {
+        setDateText(result.transactionDate);
+        next.add('transactionDate');
+        filled.push('date');
+      }
+
+      setPrefilled(next);
+      setReadNote(
+        filled.length === 0
+          ? 'Nothing could be read from this image. Enter the details yourself.'
+          : `Read ${filled.join(', ')} from the image. Check them before saving — anything you change is kept.`,
+      );
+    },
+    [session?.companyId, edited, prefilled],
+  );
 
   const pick = useCallback(
     async (source: 'camera' | 'library') => {
@@ -88,13 +147,18 @@ export default function CaptureScreen() {
           fileSizeBytes: intake.sizeBytes,
         });
         setDraft({ ...d, fileUri: intake.fileUri, fileName: intake.fileName, fileMimeType: intake.mimeType, fileSizeBytes: intake.sizeBytes });
+
+        // Read the receipt as soon as we have it. Keyed on the SAME storage key
+        // the server will use, so the client's pre-fill and the server's later
+        // pass agree by construction rather than by luck.
+        readReceipt(d.localId, intake.mimeType);
       } catch (err) {
         setFileError(err instanceof Error ? err.message : 'Could not read that file.');
       } finally {
         setBusy(false);
       }
     },
-    [actions, ensureDraft],
+    [actions, ensureDraft, readReceipt],
   );
 
   // Shown as a hint so the symbol affordance is discoverable. A symbol is only
@@ -119,13 +183,30 @@ export default function CaptureScreen() {
           currency,
           transactionDate: dateText.trim(),
           notes: notes.trim() || null,
-          // Marks ONLY the fields the person actually supplied. See
-          // provenanceForUserEntry for why a blanket 'user' stamp is wrong.
-          provenance: provenanceForUserEntry({
-            vendor: vendor.trim(),
-            amountMinorUnits: amountParse.minorUnits,
-            currencyChosen,
-            transactionDate: dateText.trim(),
+          // Typed and pre-filled are recorded differently. See provenanceForForm:
+          // a blanket 'user' stamp would lock an unread guess, and an untouched
+          // currency default, against any later correction.
+          provenance: provenanceForForm({
+            vendor: {
+              hasValue: vendor.trim() !== '',
+              editedByUser: edited.has('vendor'),
+              filledByOcr: prefilled.has('vendor'),
+            },
+            amount: {
+              hasValue: true,
+              editedByUser: edited.has('amount'),
+              filledByOcr: prefilled.has('amount'),
+            },
+            currency: {
+              hasValue: true,
+              editedByUser: currencyChosen,
+              filledByOcr: prefilled.has('currency'),
+            },
+            transactionDate: {
+              hasValue: dateText.trim() !== '',
+              editedByUser: edited.has('transactionDate'),
+              filledByOcr: prefilled.has('transactionDate'),
+            },
           }),
         });
 
@@ -140,7 +221,7 @@ export default function CaptureScreen() {
         setBusy(false);
       }
     },
-    [draft, amountParse, vendor, currency, currencyChosen, dateText, notes, actions, router],
+    [draft, amountParse, vendor, currency, currencyChosen, dateText, notes, edited, prefilled, actions, router],
   );
 
   return (
@@ -170,6 +251,12 @@ export default function CaptureScreen() {
           {fileError ? (
             <View style={{ marginTop: 10 }}>
               <Banner tone="danger">{fileError}</Banner>
+            </View>
+          ) : null}
+
+          {readNote && !fileError ? (
+            <View style={{ marginTop: 10 }}>
+              <Banner tone={prefilled.size > 0 ? 'success' : 'neutral'}>{readNote}</Banner>
             </View>
           ) : null}
 
@@ -206,14 +293,19 @@ export default function CaptureScreen() {
 
         <Card>
           <SectionTitle>Details</SectionTitle>
-          <Field label="Vendor" value={vendor} onChangeText={setVendor} placeholder="Blue Bottle Coffee" />
+          <Field
+            label="Vendor"
+            value={vendor}
+            onChangeText={(v) => { setVendor(v); markEdited('vendor'); }}
+            placeholder="Blue Bottle Coffee"
+          />
 
           <Row gap={10} style={{ alignItems: 'flex-start' }}>
             <View style={{ flex: 2 }}>
               <Field
                 label="Amount"
                 value={amountText}
-                onChangeText={setAmountText}
+                onChangeText={(v) => { setAmountText(v); markEdited('amount'); }}
                 placeholder="19.99"
                 keyboardType="decimal-pad"
                 error={amountError}
@@ -243,7 +335,7 @@ export default function CaptureScreen() {
           <Field
             label="Transaction date"
             value={dateText}
-            onChangeText={setDateText}
+            onChangeText={(v) => { setDateText(v); markEdited('transactionDate'); }}
             placeholder="2026-08-11"
             error={dateError}
             hint="The calendar date printed on the receipt. No timezone is applied to it."

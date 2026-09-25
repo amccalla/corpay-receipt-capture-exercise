@@ -169,15 +169,43 @@ describe('extractFromReceipt — uncertainty is reachable on demand', () => {
   });
 
   it('drops more fields as confidence falls — the number means something', () => {
+    // Buckets straddle LOW_CONFIDENCE_THRESHOLD rather than sitting at 0.5 and
+    // 0.9. Confidence is deliberately floored well above zero: a uniform draw
+    // kept only half the fields on average, so a quarter of receipts read as
+    // nothing and the capture screen looked broken rather than uncertain.
+    // The correlation being asserted is unchanged; only the range moved.
     const results = KEYS.map((k) => extractFromReceipt(k));
-    const lowBucket = results.filter((r) => r.confidence < 0.5);
-    const highBucket = results.filter((r) => r.confidence >= 0.9);
+    const lowBucket = results.filter((r) => r.confidence < LOW_CONFIDENCE_THRESHOLD);
+    const highBucket = results.filter((r) => r.confidence >= 0.95);
     expect(lowBucket.length).toBeGreaterThan(0);
     expect(highBucket.length).toBeGreaterThan(0);
 
     const mean = (rs: OcrResult[]): number =>
       rs.reduce((acc, r) => acc + nullCount(r), 0) / rs.length;
     expect(mean(lowBucket)).toBeGreaterThan(mean(highBucket));
+  });
+
+  it('reads a receipt as entirely blank only rarely', () => {
+    // The capture screen pre-fills from this, and a reading with nothing in it
+    // is indistinguishable to a user from the feature being broken. A real
+    // extractor can fail completely, so this is not forbidden — it is held
+    // rare (measured at roughly 1 in 500) and the capture screen says plainly
+    // when it happens rather than leaving the form mysteriously empty.
+    const N = 2000;
+    let blank = 0;
+    for (let i = 0; i < N; i++) {
+      if (nullCount(extractFromReceipt(`companies/acme/receipts/rcp_${i}.jpg`)) === 4) blank++;
+    }
+    expect(blank / N).toBeLessThan(0.02);
+  });
+
+  it('still leaves a real share of readings uncertain', () => {
+    // Skewing toward usable must not make needsReview unreachable by chance.
+    // It is also injectable on the server for on-demand demonstration.
+    const results = KEYS.map((k) => extractFromReceipt(k));
+    const uncertain = results.filter((r) => isLowConfidence(r)).length;
+    expect(uncertain).toBeGreaterThan(0);
+    expect(uncertain).toBeLessThan(results.length);
   });
 });
 

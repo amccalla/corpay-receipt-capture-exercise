@@ -26,6 +26,18 @@ export interface IntakeSuccess {
 
 export type IntakeResult = IntakeSuccess | Extract<FileValidationResult, { ok: false }>;
 
+/**
+ * A short, monotonically increasing token that makes each intake's filename
+ * distinct. Only needs to differ from the previous intake of the same draft,
+ * which a millisecond clock plus a counter gives comfortably — this is the I/O
+ * layer, so a real clock is fine here in a way it would not be in the domain.
+ */
+let intakeCounter = 0;
+function intakeDiscriminator(): string {
+  intakeCounter += 1;
+  return `${Date.now().toString(36)}${intakeCounter.toString(36)}`;
+}
+
 /** Extension for a normalized mime, so the stored copy is self-describing on disk. */
 function extensionFor(mime: string): string {
   switch (mime) {
@@ -74,9 +86,27 @@ export async function intakeFile(
   const verdict = validateReceiptFile({ fileName, declaredMime, sizeBytes, magicBytes });
   if (!verdict.ok) return verdict;
 
-  // Our copy is named by us, from our own localId — never from the picker's
-  // filename, which is untrusted and may contain traversal sequences.
-  const target = new File(receipts, `${localId}.${extensionFor(verdict.normalizedMime)}`);
+  // Our copy is named by us, never from the picker's filename, which is
+  // untrusted and may contain traversal sequences.
+  //
+  // The name carries a per-intake discriminator as well as the localId. A fixed
+  // `<localId>.<ext>` looked tidier and was a bug: picking a second image wrote
+  // the same path, so `fileUri` came back byte-identical and React Native's
+  // Image kept serving its cached copy. The file changed and the screen did
+  // not. Nothing downstream needs a stable local filename — the server's
+  // storage key is derived from (company, localId, mime), not from this.
+  //
+  // Any earlier copy for this draft is deleted first, so re-picking cannot
+  // leave orphans behind in the sandbox.
+  for (const entry of receipts.list()) {
+    if (entry instanceof File && entry.name.startsWith(`${localId}.`)) entry.delete();
+    else if (entry instanceof File && entry.name.startsWith(`${localId}-`)) entry.delete();
+  }
+
+  const target = new File(
+    receipts,
+    `${localId}-${intakeDiscriminator()}.${extensionFor(verdict.normalizedMime)}`,
+  );
   if (target.exists) target.delete();
   source.copy(target);
 

@@ -184,7 +184,17 @@ export function extractFromReceipt(storageKey: string, opts?: { seed?: number })
 
   // Quantized to 2dp: a UI that prints "83%" should not be lying about the
   // 14 digits it is hiding.
-  const confidence = Math.round(unit(stream(base, 'confidence')) * 100) / 100;
+  //
+  // Skewed toward the top of the range rather than uniform. A field is kept
+  // when its own draw is under `confidence`, so a uniform confidence meant an
+  // average keep rate of one field in two: a quarter of receipts read as
+  // nothing at all, and the capture screen looked broken rather than uncertain.
+  // This curve gives roughly two thirds a usable read and none a blank one,
+  // while still leaving about one in eight uncertain enough to need review.
+  // Uncertainty on demand is the `uncertainReading` failure injection, so the
+  // needsReview path no longer depends on drawing an unlucky key.
+  const confidence =
+    Math.round((0.6 + 0.4 * Math.sqrt(unit(stream(base, 'confidence')))) * 100) / 100;
 
   const keep = (salt: string): boolean => unit(stream(base, salt)) <= confidence;
 

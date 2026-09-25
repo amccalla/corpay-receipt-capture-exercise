@@ -18,7 +18,7 @@ Design rationale, assumptions, tradeoffs, deliberate omissions and next steps li
 | **Host** | macOS 26.6 (Darwin 25.6), Xcode 27.0, Node 22.23.1, npm 10.9.8 |
 | **Verified on the simulator** | App launches and renders; sign-in screen shows the seeded users and companies; deep-link routing works; Metro bundles 1696 modules; **no runtime errors** |
 | **Verified by test, not by hand** | The five demo steps below. Each maps to end-to-end tests against the real engine, store, session and server (see [Testing](#testing)). |
-| **Verified** | 1055 automated tests; `tsc --noEmit` clean under `strict`; ESLint clean |
+| **Verified** | 1057 automated tests; `tsc --noEmit` clean under `strict`; ESLint clean |
 | **Not verified on device** | A physical handset of either platform |
 | **Simulated, not real** | The backend. There is no network call anywhere in `src/` — the "server" is an in-process object |
 | **Untested in Expo Go** | Notification *delivery*. Expo Go dropped push support in SDK 53 — on Android the import itself throws, which crashed the app until it was guarded. The policy and route validation are unit-tested; delivery needs a development build |
@@ -107,9 +107,11 @@ Each step demonstrates one thing the brief asks for. Steps 2-5 are the ones wort
    Northwind, then Settings → **Switch to Acme Corporation**. The queued receipt is gone from the
    list and cannot be sent — it belongs to Northwind. Switch back and it uploads.
 
-5. **Extraction never overwrites a human** (~60s). Open a receipt → **Scan barcode or QR**. Point
-   it at any QR code. Whatever it reads, the "Applied" list reports *kept your own entry* for every
-   field you typed yourself, and fills only the blanks you left.
+5. **Extraction never overwrites a human** (~60s). Picking or taking a photo already pre-fills the
+   form — about two thirds of receipts read usefully, and the banner says what was read. Edit one of
+   those fields, then open **Scan barcode or QR** and point it at any QR code. The "Applied" list
+   reports *kept your own entry* for anything you typed, and fills only what you left alone. A
+   pre-filled value you did not touch is still improvable; one you edited is not.
 
 Steps 1-4 need no camera. Step 5 works in the simulator if you drag a QR image into it, and is the
 only step that benefits from a real device.
@@ -257,6 +259,10 @@ those — retrying cannot make a file smaller. The user gets an actionable messa
 spinner.
 
 **5. OCR returns after the user corrected the vendor and amount.**
+The receipt is read twice: once on the device the moment an image is picked or
+taken, to pre-fill the form, and again on the backend at submit. Both are keyed
+on the same storage key, so they agree by construction rather than by luck.
+
 Every extractable field carries a `FieldOrigin`, ordered `empty < ocr < barcode < user`. A writer
 may only overwrite a field whose current origin ranks strictly lower than its own, so a human edit
 is permanent while a barcode may still upgrade a field OCR guessed at. All automatic writes go
@@ -515,7 +521,7 @@ npm run typecheck
 npm run lint
 ```
 
-1055 tests across 22 suites.
+1057 tests across 22 suites.
 
 | Suite | Covers |
 | --- | --- |

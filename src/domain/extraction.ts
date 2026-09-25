@@ -382,41 +382,54 @@ export function mergeExtraction(
 // Provenance for human entry
 // ---------------------------------------------------------------------------
 
-/** What the capture form actually received from the person using it. */
-export interface UserEntry {
-  readonly vendor: string | null;
-  readonly amountMinorUnits: number | null;
-  /**
-   * Whether the person actively chose a currency, as opposed to accepting
-   * whatever the form defaulted to. These are NOT the same event and recording
-   * them as if they were is a lie about who decided.
-   */
-  readonly currencyChosen: boolean;
-  readonly transactionDate: string | null;
+/**
+ * One form field's history, as the capture screen knows it.
+ *
+ * The three states are genuinely different and collapsing them is a bug:
+ *   - a value the person typed is theirs, permanently;
+ *   - a value OCR pre-filled and they left alone is still OCR's guess, and a
+ *     better reading should be allowed to replace it;
+ *   - an untouched default (the currency picker's starting code) belongs to
+ *     nobody and must not be recorded as a decision.
+ */
+export interface FieldState {
+  /** The field currently holds a usable value. */
+  readonly hasValue: boolean;
+  /** The person edited this field themselves. */
+  readonly editedByUser: boolean;
+  /** An automatic pass put the current value there. */
+  readonly filledByOcr: boolean;
+}
+
+export function originFor(f: FieldState): FieldOrigin {
+  if (f.editedByUser && f.hasValue) return 'user';
+  if (f.filledByOcr && f.hasValue) return 'ocr';
+  return 'empty';
 }
 
 /**
- * Build the provenance for a human-entered form.
+ * Build the provenance for the capture form.
  *
- * A field is marked 'user' ONLY if the person actually supplied it. The obvious
- * shortcut - stamp all four as 'user' whenever the form is saved - is wrong in a
- * way that is easy to miss: the currency picker starts on a default, so a user
- * who photographs a euro receipt, types the amount and never notices the
- * picker would have 'USD' recorded as a human decision and locked against
- * correction forever.
+ * The obvious shortcut - stamp every non-empty field as 'user' on save - is
+ * wrong twice over. It records the currency picker's *default* as a human
+ * decision, locking an unconsidered code against correction forever; and once
+ * OCR pre-fills the form it would promote every guess to a human edit, so a
+ * later, better reading could never improve on it.
  *
- * Leaving an untouched field 'empty' is safe because the amount is still
- * protected: `mergeExtraction`'s Rule B refuses a currency change that would
- * re-denominate an amount the incoming origin cannot overwrite. So an
- * extraction may fill a blank the user left, but it can never quietly restate
- * the number they typed in a different currency.
+ * Leaving a field below 'user' is safe because the amount is still protected:
+ * `mergeExtraction`'s Rule B refuses a currency change that would re-denominate
+ * an amount the incoming origin cannot overwrite.
  */
-export function provenanceForUserEntry(entry: UserEntry): FieldProvenance {
-  const has = (v: string | null): boolean => v !== null && v.trim() !== '';
+export function provenanceForForm(fields: {
+  vendor: FieldState;
+  amount: FieldState;
+  currency: FieldState;
+  transactionDate: FieldState;
+}): FieldProvenance {
   return {
-    vendor: has(entry.vendor) ? 'user' : 'empty',
-    amount: entry.amountMinorUnits !== null ? 'user' : 'empty',
-    currency: entry.currencyChosen ? 'user' : 'empty',
-    transactionDate: has(entry.transactionDate) ? 'user' : 'empty',
+    vendor: originFor(fields.vendor),
+    amount: originFor(fields.amount),
+    currency: originFor(fields.currency),
+    transactionDate: originFor(fields.transactionDate),
   };
 }

@@ -43,6 +43,12 @@ const FAILURES: { key: FailureInjection; label: string; blurb: string }[] = [
     label: 'Unsupported type (HEIC)',
     blurb: 'The server will not take this format. Permanent, with an actionable message.',
   },
+  {
+    key: 'uncertainReading',
+    label: 'Uncertain reading',
+    blurb:
+      'The receipt is accepted and recorded, but read too poorly to confirm. It lands in Needs review, where your own corrections still win over anything read later.',
+  },
   { key: 'serverError', label: 'Server error', blurb: 'A 500. Retryable.' },
 ];
 

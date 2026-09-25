@@ -56,6 +56,13 @@ export type FailureInjection =
   | 'fileTooLarge'
   /** Server-side type rejection, e.g. a deployment that will not take HEIC. */
   | 'unsupportedType'
+  /**
+   * The file is accepted and the record created, but the reading is too
+   * uncertain to confirm — so the receipt lands in needsReview. Injectable
+   * because the path must be demonstrable on demand rather than waiting for an
+   * unlucky storage key.
+   */
+  | 'uncertainReading'
   | 'serverError';
 
 export type ServerErrorCode =
@@ -456,7 +463,8 @@ export class FakeServer {
     // return 'processing' here and push the terminal state later. The state
     // machine still models 'processing', and the client must not assume the
     // response is always terminal.
-    const state: ServerState = isLowConfidence(ocr) ? 'needsReview' : 'confirmed';
+    const state: ServerState =
+      this.failure === 'uncertainReading' || isLowConfidence(ocr) ? 'needsReview' : 'confirmed';
 
     const receipt: Receipt = {
       id,
