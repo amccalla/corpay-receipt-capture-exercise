@@ -107,11 +107,11 @@ Each step demonstrates one thing the brief asks for. Steps 2-5 are the ones wort
    Northwind, then Settings → **Switch to Acme Corporation**. The queued receipt is gone from the
    list and cannot be sent — it belongs to Northwind. Switch back and it uploads.
 
-5. **Extraction never overwrites a human** (~60s). Picking or taking a photo already pre-fills the
-   form — about two thirds of receipts read usefully, and the banner says what was read. Edit one of
-   those fields, then open **Scan barcode or QR** and point it at any QR code. The "Applied" list
-   reports *kept your own entry* for anything you typed, and fills only what you left alone. A
-   pre-filled value you did not touch is still improvable; one you edited is not.
+5. **Extraction never overwrites a human** (~60s). After attaching a photo you get a card marked
+   **Simulated extraction** — those values come from the draft's id, not the image, and the card says
+   so. Press **Use these**, then edit one of the fields it filled. Now open **Scan barcode or QR**:
+   the "Applied" list reports *kept your own entry* for what you edited, and fills only what you left
+   alone. A value you did not touch is still improvable; one you edited is not.
 
 Steps 1-4 need no camera. Step 5 works in the simulator if you drag a QR image into it, and is the
 only step that benefits from a real device.
@@ -138,8 +138,14 @@ only step that benefits from a real device.
   `URLSession`/`WorkManager` background transfer is listed under Scope as not implemented.
 - **Web is a degraded preview.** There is no native SQLite or Keychain in the browser, so the app
   falls back to in-memory stores — and *says so in a banner* rather than pretending to be durable.
-- **No OCR.** Extraction is a deterministic fake keyed off the storage key. That is a deliberate
-  choice: a fake you can trigger on demand is more discussable than a flaky external service.
+- **No OCR, at all.** `extractFromReceipt` takes a *storage key string* and never sees a pixel. The
+  values it produces are generated from the draft's id, so the same draft always reads the same way
+  and a real receipt reads as nonsense. The brief says no real provider is required and that a
+  deterministic fake is more discussable than a fragile external one, which is why it is built this
+  way — but the UI has to be honest about it, so the capture screen labels the values **Simulated
+  extraction** and makes you accept them rather than filling the form behind your back. Wiring a
+  real provider means replacing one pure function whose signature would become
+  `(bytes) => OcrResult`.
 
 ---
 
@@ -259,9 +265,6 @@ those — retrying cannot make a file smaller. The user gets an actionable messa
 spinner.
 
 **5. OCR returns after the user corrected the vendor and amount.**
-The receipt is read twice: once on the device the moment an image is picked or
-taken, to pre-fill the form, and again on the backend at submit. Both are keyed
-on the same storage key, so they agree by construction rather than by luck.
 
 Every extractable field carries a `FieldOrigin`, ordered `empty < ocr < barcode < user`. A writer
 may only overwrite a field whose current origin ranks strictly lower than its own, so a human edit

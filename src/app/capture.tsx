@@ -6,7 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { isValidDateOnly } from '@/domain/dates';
 import { provenanceForForm } from '@/domain/extraction';
 import { safeStorageKey } from '@/domain/validation';
-import { extractFromReceipt } from '@/server/ocr';
+import { extractFromReceipt, type OcrResult } from '@/server/ocr';
 import { formatMinorUnits, parseAmountToMinorUnits } from '@/domain/money';
 import type { ReceiptDraft } from '@/domain/types';
 import { useApp } from '@/ui/app-context';
@@ -40,7 +40,7 @@ export default function CaptureScreen() {
   // provenanceForForm.
   const [edited, setEdited] = useState<Set<string>>(new Set());
   const [prefilled, setPrefilled] = useState<Set<string>>(new Set());
-  const [readNote, setReadNote] = useState<string | null>(null);
+  const [proposal, setProposal] = useState<OcrResult | null>(null);
 
   const markEdited = useCallback((field: string) => {
     setEdited((prev) => (prev.has(field) ? prev : new Set(prev).add(field)));
@@ -58,51 +58,52 @@ export default function CaptureScreen() {
   }, [draft, actions]);
 
   /**
-   * Pre-fill from the receipt image.
+   * Produce the simulated reading for this draft.
    *
-   * Only fills fields the person has not typed into. A pre-filled value is
-   * recorded as 'ocr', not 'user', so a barcode scan or the server's own pass
-   * can still improve on it — and so nothing here can be mistaken later for a
-   * human decision.
+   * This build has NO OCR. `extractFromReceipt` takes a storage key string and
+   * never sees the image, so the values are generated from the draft's id, not
+   * read from the photo. An earlier version wrote them straight into the form
+   * under a banner saying they had been "read from the image" — which was
+   * false, and left the user deleting invented data off a real receipt.
+   *
+   * So it is offered as a clearly-labelled proposal the person accepts or
+   * ignores. The machinery it exists to demonstrate — provenance, correction,
+   * and a later pass being unable to overwrite a human — is unchanged.
    */
-  const readReceipt = useCallback(
+  const proposeReading = useCallback(
     (localId: string, mime: string) => {
       const companyId = session?.companyId;
       if (!companyId) return;
-
-      const result = extractFromReceipt(safeStorageKey(companyId, localId, mime));
-      const filled: string[] = [];
-      const next = new Set(prefilled);
-
-      if (result.vendor && !edited.has('vendor')) {
-        setVendor(result.vendor);
-        next.add('vendor');
-        filled.push('vendor');
-      }
-      if (result.currency && !edited.has('currency')) {
-        setCurrency(result.currency);
-        next.add('currency');
-      }
-      if (result.amountMinorUnits !== null && result.currency && !edited.has('amount')) {
-        setAmountText(formatMinorUnits(result.amountMinorUnits, result.currency));
-        next.add('amount');
-        filled.push('amount');
-      }
-      if (result.transactionDate && !edited.has('transactionDate')) {
-        setDateText(result.transactionDate);
-        next.add('transactionDate');
-        filled.push('date');
-      }
-
-      setPrefilled(next);
-      setReadNote(
-        filled.length === 0
-          ? 'Nothing could be read from this image. Enter the details yourself.'
-          : `Read ${filled.join(', ')} from the image. Check them before saving — anything you change is kept.`,
-      );
+      setProposal(extractFromReceipt(safeStorageKey(companyId, localId, mime)));
     },
-    [session?.companyId, edited, prefilled],
+    [session?.companyId],
   );
+
+  /** Accept the simulated values, for fields the person has not typed into. */
+  const acceptProposal = useCallback(() => {
+    if (!proposal) return;
+    const next = new Set(prefilled);
+
+    if (proposal.vendor && !edited.has('vendor')) {
+      setVendor(proposal.vendor);
+      next.add('vendor');
+    }
+    if (proposal.currency && !edited.has('currency')) {
+      setCurrency(proposal.currency);
+      next.add('currency');
+    }
+    if (proposal.amountMinorUnits !== null && proposal.currency && !edited.has('amount')) {
+      setAmountText(formatMinorUnits(proposal.amountMinorUnits, proposal.currency));
+      next.add('amount');
+    }
+    if (proposal.transactionDate && !edited.has('transactionDate')) {
+      setDateText(proposal.transactionDate);
+      next.add('transactionDate');
+    }
+
+    setPrefilled(next);
+    setProposal(null);
+  }, [proposal, prefilled, edited]);
 
   const pick = useCallback(
     async (source: 'camera' | 'library') => {
@@ -151,14 +152,14 @@ export default function CaptureScreen() {
         // Read the receipt as soon as we have it. Keyed on the SAME storage key
         // the server will use, so the client's pre-fill and the server's later
         // pass agree by construction rather than by luck.
-        readReceipt(d.localId, intake.mimeType);
+        proposeReading(d.localId, intake.mimeType);
       } catch (err) {
         setFileError(err instanceof Error ? err.message : 'Could not read that file.');
       } finally {
         setBusy(false);
       }
     },
-    [actions, ensureDraft, readReceipt],
+    [actions, ensureDraft, proposeReading],
   );
 
   // Shown as a hint so the symbol affordance is discoverable. A symbol is only
@@ -254,9 +255,42 @@ export default function CaptureScreen() {
             </View>
           ) : null}
 
-          {readNote && !fileError ? (
-            <View style={{ marginTop: 10 }}>
-              <Banner tone={prefilled.size > 0 ? 'success' : 'neutral'}>{readNote}</Banner>
+          {proposal && !fileError ? (
+            <View
+              style={{
+                marginTop: 12, borderWidth: 1, borderColor: p.border,
+                borderRadius: 9, padding: 13, backgroundColor: p.bg,
+              }}
+            >
+              <Text style={{ fontSize: 11, fontWeight: '800', letterSpacing: 0.8, color: p.warning }}>
+                SIMULATED EXTRACTION
+              </Text>
+              <View style={{ height: 6 }} />
+              <Muted>
+                This build has no OCR. These values are generated from the receipt&apos;s id — they are
+                not read from your photo, and they will not match what it says. They exist so the
+                review-and-correct flow can be demonstrated.
+              </Muted>
+              <View style={{ height: 10 }} />
+              <ReadRow label="Vendor" value={proposal.vendor} />
+              <ReadRow
+                label="Amount"
+                value={
+                  proposal.amountMinorUnits !== null && proposal.currency
+                    ? `${proposal.currency} ${formatMinorUnits(proposal.amountMinorUnits, proposal.currency)}`
+                    : null
+                }
+              />
+              <ReadRow label="Date" value={proposal.transactionDate} />
+              <View style={{ height: 12 }} />
+              <Row gap={10}>
+                <View style={{ flex: 1 }}>
+                  <Button title="Ignore" variant="secondary" onPress={() => setProposal(null)} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Button title="Use these" onPress={acceptProposal} />
+                </View>
+              </Row>
             </View>
           ) : null}
 
@@ -371,6 +405,18 @@ export default function CaptureScreen() {
         }}
       />
     </SafeAreaView>
+  );
+}
+
+function ReadRow({ label, value }: { label: string; value: string | null }) {
+  const p = usePalette();
+  return (
+    <Row style={{ justifyContent: 'space-between', paddingVertical: 3 }}>
+      <Text style={{ color: p.textMuted, fontSize: 13 }}>{label}</Text>
+      <Text style={{ color: value ? p.text : p.textMuted, fontSize: 14, fontWeight: value ? '600' : '400' }}>
+        {value ?? 'not produced'}
+      </Text>
+    </Row>
   );
 }
 
